@@ -1,0 +1,74 @@
+server:
+    verbosity: 1
+    port: 5053
+    do-ip4: yes
+    do-udp: yes
+    do-tcp: yes
+    do-ip6: no
+    prefer-ip6: no
+
+    # Disable setuid drop since the process is already running as an unprivileged container user
+    username: ""
+
+    # Listen on localhost (supervisor and AGH are in the same network namespace)
+    interface: 127.0.0.1
+
+    # --- PERFORMANCE & RESOURCE SCALING ---
+    # Number of CPU cores to use. Set to match the 'cpus' limit in docker-compose.
+    # For most home users, 1 is enough. For 100+ clients, set to 2 or 4.
+    # Single thread optimized for container execution
+    num-threads: 1
+    msg-cache-slabs: 1
+    rrset-cache-slabs: 1
+    infra-cache-slabs: 1
+    key-cache-slabs: 1
+
+    # Memory cache for DNS messages. Recommended: 4m to 64m.
+    # Increase this for faster recurring query responses if you have spare RAM.
+    msg-cache-size: 4m
+
+    # Memory cache for RRsets (resource records). Must be 2x the msg-cache-size.
+    # Recommended: 8m to 128m.
+    rrset-cache-size: 8m
+
+    so-rcvbuf: 1m
+    edns-buffer-size: 1232
+
+    # --- CACHE OPTIMIZATION ---
+    prefetch: yes
+    prefetch-key: yes
+    aggressive-nsec: yes
+    serve-expired: yes
+    serve-expired-client-timeout: 1800
+    serve-expired-ttl-reset: yes
+
+    # --- PRIVACY & SECURITY HARDENING ---
+    qname-minimisation: yes
+    hide-identity: yes
+    hide-version: yes
+    use-caps-for-id: yes
+    deny-any: yes
+
+    harden-glue: yes
+    harden-dnssec-stripped: yes
+    harden-algo-downgrade: yes
+    harden-below-nxdomain: yes
+    harden-short-bufsize: yes
+    harden-large-queries: yes
+    val-clean-additional: yes
+
+    ede: yes
+    ede-serve-expired: yes
+
+    # --- ACCESS CONTROL & REBINDING PROTECTION ---
+    access-control: 127.0.0.0/8 allow
+
+    private-address: 10.0.0.0/8
+    private-address: 172.16.0.0/12
+    private-address: 192.168.0.0/16
+    private-address: 169.254.0.0/16
+    private-address: fd00::/8
+    private-address: fe80::/10
+
+    # Root key location inside the container
+    auto-trust-anchor-file: "/opt/unbound/root.key"

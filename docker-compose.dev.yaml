@@ -1,0 +1,97 @@
+name: adguardhome-dev
+
+services:
+  agh:
+    container_name: agh-dev
+    hostname: agh-dev
+    image: agh-unbound-lego-dev:latest
+    build:
+      context: .
+    pull_policy: never
+    restart: on-failure:3
+
+    networks:
+      dns:
+        ipv4_address: 10.102.100.2
+
+    ports:
+      # - 127.0.0.1:6554:53/tcp
+      # - 127.0.0.1:6554:53/udp
+      # - 127.0.0.1:67:67/udp
+      # - 127.0.0.1:68:68/tcp
+      # - 127.0.0.1:68:68/udp
+      - 127.0.0.1:8003:80/tcp
+      - 127.0.0.1:6444:443/tcp
+      - 127.0.0.1:6444:443/udp
+      - 853:853/tcp
+      - 853:853/udp
+      #- 5443:5443/tcp
+      #- 5443:5443/udp
+      #- 127.0.0.1:6060:6060/tcp
+
+    environment:
+      - LOG_LEVEL=error
+      - LEGO_ENABLE=false
+      - ACME_DOMAIN=
+      # - QUIC_GO_DISABLE_ECN=true
+
+    volumes:
+      - ./data/agh/work:/opt/adguardhome/work/data
+      - ./data/agh/conf:/opt/adguardhome/conf
+      - ./data/unbound:/opt/unbound
+      - ./data/lego:/opt/lego
+      - /etc/localtime:/etc/localtime:ro
+
+    read_only: true
+    tmpfs:
+      - /run:mode=0750,uid=2000,gid=2000,size=32m,noexec,nosuid
+      - /tmp:mode=0750,uid=2000,gid=2000,size=8m,noexec,nosuid
+
+    security_opt:
+      - no-new-privileges:true
+
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      # - NET_RAW
+
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512m
+        reservations:
+          cpus: "0.1"
+          memory: 128m
+
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # Uncomment if LEGO_ENABLE=true. Requires the top-level secrets block below.
+    # secrets:
+    #   - source: acme_email
+    #   - source: cf_dns_api_token
+
+# Uncomment and populate the corresponding files in ./secrets if LEGO_ENABLE=true.
+# secrets:
+#   acme_email:
+#     file: ./secrets/acme_email
+#   cf_dns_api_token:
+#     file: ./secrets/cf_dns_api_token
+
+networks:
+  dns:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.102.100.0/24
+          gateway: 10.102.100.1
