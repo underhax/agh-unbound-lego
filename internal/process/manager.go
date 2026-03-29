@@ -9,6 +9,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/webstudiobond/agh-unbound-lego/internal/util"
 )
 
 // Manager handles the lifecycle, monitoring, and structured logging of child processes.
@@ -133,16 +135,12 @@ func (m *Manager) Restart(name, bin string, args ...string) error {
 
 // waitForExit polls the process map to confirm termination.
 func (m *Manager) waitForExit(name string, attempts int, delay time.Duration) bool {
-	for range attempts {
-		time.Sleep(delay)
+	return util.PollAfterDelay(attempts, delay, func() bool {
 		m.mu.Lock()
 		_, exists := m.cmds[name]
 		m.mu.Unlock()
-		if !exists {
-			return true
-		}
-	}
-	return false
+		return !exists
+	})
 }
 
 // StopAll executes a sequential LIFO shutdown to respect service dependencies.

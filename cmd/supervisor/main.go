@@ -19,6 +19,7 @@ import (
 	"github.com/webstudiobond/agh-unbound-lego/internal/health"
 	"github.com/webstudiobond/agh-unbound-lego/internal/process"
 	"github.com/webstudiobond/agh-unbound-lego/internal/setup"
+	"github.com/webstudiobond/agh-unbound-lego/internal/util"
 )
 
 func setLogger(level string) {
@@ -166,14 +167,9 @@ func startServices(pm *process.Manager, aghArgs []string) error {
 
 	// Wait for Unbound to be ready instead of using a fixed sleep.
 	// We'll poll its DNS port for up to 5 seconds.
-	unboundReady := false
-	for range 50 {
-		if err := health.CheckDNS("127.0.0.1:5053"); err == nil {
-			unboundReady = true
-			break
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+	unboundReady := util.PollImmediate(50, 100*time.Millisecond, func() bool {
+		return health.CheckDNS("127.0.0.1:5053") == nil
+	})
 
 	if !unboundReady {
 		return errors.New("unbound failed to become ready in time")
