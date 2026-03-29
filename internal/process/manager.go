@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"slices"
 	"sync"
@@ -42,6 +43,16 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 
 	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
 	cmd := exec.CommandContext(context.Background(), bin, args...)
+
+	// Explicit ENV whitelist mirrors the isolation applied to the lego subprocess.
+	// Prevents supervisor secrets from leaking into AGH or unbound if the parent
+	// process ever receives them via environment rather than Docker secrets.
+	cmd.Env = []string{}
+	for _, key := range []string{"PATH", "HOME"} {
+		if val := os.Getenv(key); val != "" {
+			cmd.Env = append(cmd.Env, key+"="+val)
+		}
+	}
 
 	// Create pipes to intercept child process output.
 	// Directing these to os.Stdout would break JSON log parsing.
