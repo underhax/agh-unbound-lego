@@ -17,10 +17,10 @@ func TestBuildCmd_WildcardAndEnv(t *testing.T) {
 		CFDNSToken: "secret-token",
 		LegoEnable: true,
 	}
-	m := NewManager(cfg)
+	m := NewManager(cfg, nil)
 
 	// Action: Build the execution command for initial certificate run
-	cmd := m.buildCmd(context.Background(), "run", "")
+	cmd := m.buildCmd(context.Background(), "run")
 	args := strings.Join(cmd.Args, " ")
 
 	// Assertion: Verify main domain presence
@@ -44,7 +44,7 @@ func TestBuildCmd_WildcardAndEnv(t *testing.T) {
 func TestCertExists_Negative(t *testing.T) {
 	// Assertion: Ensure the check fails gracefully when no certificates are present.
 	cfg := &config.Config{ACMEDomain: "missing.invalid"}
-	m := NewManager(cfg)
+	m := NewManager(cfg, nil)
 
 	if m.certExists() {
 		t.Error("certExists returned true for a non-existent certificate path")

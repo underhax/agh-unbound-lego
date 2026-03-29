@@ -79,12 +79,6 @@ func run() (int, error) {
 
 	pm := process.NewManager()
 
-	if cfg.LegoEnable {
-		if err := initLego(cfg); err != nil {
-			return 1, err
-		}
-	}
-
 	aghArgs := []string{
 		"-c", filepath.Join(setup.DirAGHConf, "AdGuardHome.yaml"),
 		"-w", setup.DirAGHWork,
@@ -92,12 +86,16 @@ func run() (int, error) {
 		"--no-permcheck",
 	}
 
+	if cfg.LegoEnable {
+		if err := initLego(cfg, pm, aghArgs); err != nil {
+			return 1, err
+		}
+	}
+
 	if err := startServices(pm, aghArgs); err != nil {
 		pm.StopAll(5 * time.Second)
 		return 1, err
 	}
-
-	setupSignalHandlers(pm, aghArgs)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -133,8 +131,15 @@ func initInfrastructure() error {
 }
 
 // initLego handles initial certificate acquisition and renewal scheduling.
-func initLego(cfg *config.Config) error {
-	acmeManager := acme.NewManager(cfg)
+// onRenew restarts AGH directly without routing through OS signals,
+// removing the shell-execution surface of the --renew-hook mechanism.
+func initLego(cfg *config.Config, pm *process.Manager, aghArgs []string) error {
+	onRenew := func() {
+		if err := pm.Restart("adguardhome", "/opt/adguardhome/AdGuardHome", aghArgs...); err != nil {
+			slog.Error("Failed to restart AdGuard Home after certificate renewal", "error", err)
+		}
+	}
+	acmeManager := acme.NewManager(cfg, onRenew)
 	if err := acmeManager.EnsureCert(context.Background()); err != nil {
 		return fmt.Errorf("failed to ensure TLS certificate: %w", err)
 	}
@@ -164,19 +169,4 @@ func startServices(pm *process.Manager, aghArgs []string) error {
 
 	slog.Info("All critical processes running.")
 	return nil
-}
-
-// setupSignalHandlers configures observers for external triggers like certificate updates.
-func setupSignalHandlers(pm *process.Manager, aghArgs []string) {
-	usr1Ch := make(chan os.Signal, 1)
-	signal.Notify(usr1Ch, syscall.SIGUSR1)
-
-	go func() {
-		for range usr1Ch {
-			slog.Info("Received SIGUSR1. TLS certificate updated. Restarting AdGuard Home...")
-			if err := pm.Restart("adguardhome", "/opt/adguardhome/AdGuardHome", aghArgs...); err != nil {
-				slog.Error("Failed to restart AdGuard Home", "error", err)
-			}
-		}
-	}()
 }
