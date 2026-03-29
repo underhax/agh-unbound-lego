@@ -42,9 +42,10 @@ server {
 
     add_header Strict-Transport-Security "max-age=63072000" always;
 
-    # Baseline security headers to prevent clickjacking and MIME-type sniffing
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:;" always;
+    add_header Referrer-Policy "no-referrer" always;
 
     location = /favicon.ico {
         log_not_found off;
@@ -90,7 +91,7 @@ server {
 
     location /dns-query {
         proxy_set_header Host $http_host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_redirect off;
         proxy_buffering on;
         proxy_http_version 1.1;

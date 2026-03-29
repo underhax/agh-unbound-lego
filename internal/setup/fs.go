@@ -90,7 +90,7 @@ func copyFile(src, dst string, perm os.FileMode) (err error) {
 		}
 	}()
 
-	// O_EXCL prevents race conditions if another process is creating the file
+	// O_EXCL guards against concurrent supervisor instances silently overwriting a user-customised config on shared volume mounts during parallel container startup.
 	// #nosec G304 -- Paths are provided by internal constants, not user input.
 	destFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, perm)
 	if err != nil {

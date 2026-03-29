@@ -10,6 +10,11 @@ services:
     pull_policy: never
     restart: on-failure:3
 
+    healthcheck:
+      interval: 10s
+      timeout: 5s
+      retries: 2
+
     networks:
       dns:
         ipv4_address: 10.102.100.2

@@ -14,6 +14,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const checkTimeout = 2 * time.Second
+
+// dnsDialer and httpClient are package-level to avoid repeated allocation across
+// the two CheckDNS calls made per healthcheck invocation (Unbound + AGH DNS port).
+var dnsDialer = &net.Dialer{Timeout: checkTimeout}
+var httpClient = &http.Client{Timeout: checkTimeout}
+
 // aghConfig maps the minimal structure needed to extract binding ports.
 type aghConfig struct {
 	HTTP struct {
@@ -42,13 +49,12 @@ func (c *Checker) Run() (err error) {
 		return readErr
 	}
 
-	client := &http.Client{Timeout: 2 * time.Second}
 	req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, aghWebURL, http.NoBody)
 	if reqErr != nil {
 		return fmt.Errorf("failed to create AGH HTTP request: %w", reqErr)
 	}
 
-	resp, doErr := client.Do(req)
+	resp, doErr := httpClient.Do(req)
 	if doErr != nil {
 		return fmt.Errorf("AGH HTTP check failed (%s): %w", aghWebURL, doErr)
 	}
@@ -58,7 +64,6 @@ func (c *Checker) Run() (err error) {
 			err = fmt.Errorf("failed to drain response body: %w", copyErr)
 		}
 
-		// Explicitly capture the close error only if the main execution succeeded to preserve original error context.
 		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
 			err = fmt.Errorf("failed to close response body: %w", closeErr)
 		}
@@ -104,8 +109,7 @@ func (c *Checker) resolveEndpoints() (webURL, dnsPort string, err error) {
 
 // CheckDNS sends a raw DNS query (Type A for root) to verify the resolver is functionally answering.
 func CheckDNS(address string) error {
-	dialer := &net.Dialer{Timeout: 2 * time.Second}
-	conn, err := dialer.DialContext(context.Background(), "udp", address)
+	conn, err := dnsDialer.DialContext(context.Background(), "udp", address)
 	if err != nil {
 		return fmt.Errorf("dialing %s failed: %w", address, err)
 	}
@@ -114,7 +118,7 @@ func CheckDNS(address string) error {
 
 	// SetDeadline covers both Write and Read, bounding the entire exchange to 2 seconds.
 	// SetReadDeadline alone would leave Write unprotected if the kernel UDP send buffer saturates.
-	if err = conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+	if err = conn.SetDeadline(time.Now().Add(checkTimeout)); err != nil {
 		return fmt.Errorf("failed to set deadline: %w", err)
 	}
 
@@ -132,17 +136,15 @@ func CheckDNS(address string) error {
 		return fmt.Errorf("failed to read DNS response: %w", err)
 	}
 
-	// A valid DNS header is at least 12 bytes
+	// Minimum valid DNS header per RFC 1035 §4.1.
 	if n < 12 {
 		return fmt.Errorf("DNS response too short: %d bytes", n)
 	}
 
-	// Verify Transaction ID matches the query (\xAA\xAA)
 	if buf[0] != 0xAA || buf[1] != 0xAA {
 		return fmt.Errorf("DNS response transaction ID mismatch: got %02x %02x", buf[0], buf[1])
 	}
 
-	// Verify the QR (Query Response) bit is set in the flags (byte 2, highest bit)
 	if buf[2]&0x80 == 0 {
 		return errors.New("DNS response is not a reply (QR bit not set)")
 	}
