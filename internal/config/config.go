@@ -128,8 +128,11 @@ func readSecret(dir, filename string) (string, error) {
 
 // validateDomain strictly validates and normalizes a domain using the official IDNA profile.
 func validateDomain(domain string) error {
+	if domain == "" {
+		return errors.New("ACME_DOMAIN is required when LEGO_ENABLE is true")
+	}
 	if _, err := idna.Lookup.ToASCII(domain); err != nil {
-		return fmt.Errorf("IDNA validation failed: %w", err)
+		return fmt.Errorf("ACME_DOMAIN validation failed: %w", err)
 	}
 	return nil
 }
