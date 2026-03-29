@@ -19,7 +19,14 @@ const checkTimeout = 2 * time.Second
 // dnsDialer and httpClient are package-level to avoid repeated allocation across
 // the two CheckDNS calls made per healthcheck invocation (Unbound + AGH DNS port).
 var dnsDialer = &net.Dialer{Timeout: checkTimeout}
-var httpClient = &http.Client{Timeout: checkTimeout}
+var httpClient = &http.Client{
+	Timeout: checkTimeout,
+	// AGH admin panel should not redirect on the health probe path.
+	// Following redirects risks consuming the timeout budget on TLS or auth endpoints.
+	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 // aghConfig maps the minimal structure needed to extract binding ports.
 type aghConfig struct {
@@ -130,7 +137,9 @@ func CheckDNS(address string) error {
 		return fmt.Errorf("failed to send DNS query: %w", err)
 	}
 
-	buf := make([]byte, 512)
+	// 4096 bytes accommodates EDNS0 and DNSSEC responses (DNSKEY + RRSIG can exceed 1200 bytes).
+	// The pre-EDNS0 limit of 512 bytes causes silent truncation that still passes header validation.
+	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return fmt.Errorf("failed to read DNS response: %w", err)

@@ -13,7 +13,6 @@ import (
 type LevelParser func(line string) slog.Level
 
 // StreamToLog reads lines from r and emits them as structured slog entries at the given level.
-// Closes r on return to release OS file descriptors.
 // If parser is non-nil, it is called per line to dynamically override the default level.
 func StreamToLog(ctx context.Context, name, stream string, r io.ReadCloser, level slog.Level, parser LevelParser) {
 	defer r.Close() //nolint:errcheck // Best-effort cleanup for pipe reader.

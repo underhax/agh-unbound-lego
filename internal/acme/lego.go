@@ -30,17 +30,23 @@ func NewManager(cfg *config.Config, onRenew func()) *Manager {
 	return &Manager{cfg: cfg, onRenew: onRenew}
 }
 
-// certExists checks if the certificate file is already present on the filesystem.
+// statCert returns the FileInfo for the managed certificate file.
+// Centralises path construction so provider-specific layout changes require a single edit.
+func (m *Manager) statCert() (os.FileInfo, error) {
+	info, err := os.Stat(filepath.Join(setup.DirLego, "certificates", m.cfg.ACMEDomain+".crt"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat certificate file: %w", err)
+	}
+	return info, nil
+}
+
 func (m *Manager) certExists() bool {
-	certPath := filepath.Join(setup.DirLego, "certificates", m.cfg.ACMEDomain+".crt")
-	_, err := os.Stat(certPath)
+	_, err := m.statCert()
 	return err == nil
 }
 
-// getCertModTime returns the modification time of the certificate file, or zero time if absent.
 func (m *Manager) getCertModTime() time.Time {
-	certPath := filepath.Join(setup.DirLego, "certificates", m.cfg.ACMEDomain+".crt")
-	info, err := os.Stat(certPath)
+	info, err := m.statCert()
 	if err != nil {
 		return time.Time{}
 	}
