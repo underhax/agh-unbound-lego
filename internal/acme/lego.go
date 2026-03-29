@@ -88,7 +88,7 @@ func (m *Manager) EnsureCert(ctx context.Context) error {
 // StartRenewTicker runs a background routine that checks for renewal daily.
 func (m *Manager) StartRenewTicker(ctx context.Context) {
 	go func() {
-	    // Once-daily polling matches lego's built-in 30-day renewal threshold.
+		// Once-daily polling matches lego's built-in 30-day renewal threshold.
 		// More frequent checks waste ACME API quota without shortening the renewal window.
 		ticker := time.NewTicker(24 * time.Hour)
 		defer ticker.Stop()
