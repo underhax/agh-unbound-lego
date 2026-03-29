@@ -12,7 +12,7 @@ import (
 
 // pipeLogger consumes lines from an io.ReadCloser and emits them as structured slog entries.
 // It maintains process context to avoid log interleaving in the supervisor's output.
-func pipeLogger(name, stream string, r io.ReadCloser) {
+func pipeLogger(ctx context.Context, name, stream string, r io.ReadCloser) {
 	defaultLevel := slog.LevelInfo
 	var parser util.LevelParser
 
@@ -35,5 +35,5 @@ func pipeLogger(name, stream string, r io.ReadCloser) {
 		}
 	}
 
-	util.StreamToLog(context.Background(), name, stream, r, defaultLevel, parser)
+	util.StreamToLog(ctx, name, stream, r, defaultLevel, parser)
 }

@@ -16,6 +16,7 @@ import (
 
 // Manager handles the lifecycle, monitoring, and structured logging of child processes.
 type Manager struct {
+	ctx        context.Context
 	cmds       map[string]*exec.Cmd
 	errChan    chan error
 	order      []string // Tracks insertion order for reverse LIFO shutdown.
@@ -25,8 +26,9 @@ type Manager struct {
 }
 
 // NewManager initializes process tracking and telemetry channels.
-func NewManager() *Manager {
+func NewManager(ctx context.Context) *Manager {
 	return &Manager{
+		ctx:     ctx,
 		cmds:    make(map[string]*exec.Cmd),
 		errChan: make(chan error, 2),
 	}
@@ -42,7 +44,7 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 	}
 
 	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
-	cmd := exec.CommandContext(context.Background(), bin, args...)
+	cmd := exec.CommandContext(m.ctx, bin, args...)
 
 	// Explicit ENV whitelist mirrors the isolation applied to the lego subprocess.
 	// Prevents supervisor secrets from leaking into AGH or unbound if the parent
@@ -73,8 +75,8 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 	}
 
 	// Consume stdout/stderr in separate goroutines to prevent pipe buffer saturation (blocking).
-	go pipeLogger(name, "stdout", stdout)
-	go pipeLogger(name, "stderr", stderr)
+	go pipeLogger(m.ctx, name, "stdout", stdout)
+	go pipeLogger(m.ctx, name, "stderr", stderr)
 
 	m.cmds[name] = cmd
 

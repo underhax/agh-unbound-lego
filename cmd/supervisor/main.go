@@ -56,6 +56,9 @@ func performHealthcheck() {
 
 // run encapsulates the supervisor's lifecycle to guarantee deferred cleanups prior to os.Exit.
 func run() (int, error) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	setLogger(slog.LevelInfo)
 
 	cfg, err := config.Load(config.DefaultSecretsDir)
@@ -77,7 +80,7 @@ func run() (int, error) {
 		return 1, err
 	}
 
-	pm := process.NewManager()
+	pm := process.NewManager(ctx)
 
 	aghArgs := []string{
 		"-c", filepath.Join(setup.DirAGHConf, "AdGuardHome.yaml"),
@@ -87,7 +90,7 @@ func run() (int, error) {
 	}
 
 	if cfg.LegoEnable {
-		if err := initLego(cfg, pm, aghArgs); err != nil {
+		if err := initLego(ctx, cfg, pm, aghArgs); err != nil {
 			return 1, err
 		}
 	}
@@ -133,17 +136,17 @@ func initInfrastructure() error {
 // initLego handles initial certificate acquisition and renewal scheduling.
 // onRenew restarts AGH directly without routing through OS signals,
 // removing the shell-execution surface of the --renew-hook mechanism.
-func initLego(cfg *config.Config, pm *process.Manager, aghArgs []string) error {
+func initLego(ctx context.Context, cfg *config.Config, pm *process.Manager, aghArgs []string) error {
 	onRenew := func() {
 		if err := pm.Restart("adguardhome", "/opt/adguardhome/AdGuardHome", aghArgs...); err != nil {
 			slog.Error("Failed to restart AdGuard Home after certificate renewal", "error", err)
 		}
 	}
 	acmeManager := acme.NewManager(cfg, onRenew)
-	if err := acmeManager.EnsureCert(context.Background()); err != nil {
+	if err := acmeManager.EnsureCert(ctx); err != nil {
 		return fmt.Errorf("failed to ensure TLS certificate: %w", err)
 	}
-	acmeManager.StartRenewTicker(context.Background())
+	acmeManager.StartRenewTicker(ctx)
 	return nil
 }
 
