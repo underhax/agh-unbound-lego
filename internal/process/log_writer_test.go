@@ -2,6 +2,7 @@ package process
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -23,7 +24,7 @@ func TestPipeLogger_StructuredOutput(t *testing.T) {
 	done := make(chan struct{})
 	// Run pipeLogger in a goroutine as it blocks until EOF
 	go func() {
-		pipeLogger("test-proc", "stdout", pr)
+		pipeLogger(context.Background(), "test-proc", "stdout", pr)
 		close(done)
 	}()
 
@@ -67,7 +68,7 @@ func TestPipeLogger_StderrLevels(t *testing.T) {
 	pr, pw := io.Pipe()
 	done := make(chan struct{})
 	go func() {
-		pipeLogger("test-proc", "stderr", pr)
+		pipeLogger(context.Background(), "test-proc", "stderr", pr)
 		close(done)
 	}()
 

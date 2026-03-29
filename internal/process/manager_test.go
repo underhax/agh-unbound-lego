@@ -1,12 +1,13 @@
 package process
 
 import (
+	"context"
 	"testing"
 	"time"
 )
 
 func TestManager_Lifecycle(t *testing.T) {
-	m := NewManager()
+	m := NewManager(context.Background())
 
 	// 1. Start a background process
 	err := m.Start("sleeper", "sleep", "10")
