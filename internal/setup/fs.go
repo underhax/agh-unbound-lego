@@ -61,9 +61,19 @@ func TrustAnchor() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// We ignore the error and rely on the subsequent unbound process to validate it.
+	// unbound-anchor returns non-zero on first-run bootstrap even on success, so the exit
+	// code is not a reliable signal. File presence and size are checked immediately after.
 	// #nosec G204 -- keyPath is derived from internal constants, immune to command injection.
-	_ = exec.CommandContext(ctx, "unbound-anchor", "-a", keyPath).Run() //nolint:errcheck // unbound-anchor intentionally returns non-zero on successful bootstrap.
+	_ = exec.CommandContext(ctx, "unbound-anchor", "-a", keyPath).Run() //nolint:errcheck // exit code is unreliable; post-run file validation below is the actual check.
+
+	// Validate that the anchor file was actually created and is not empty.
+	// If the network is down during first boot, unbound-anchor fails silently.
+	if info, err := os.Stat(keyPath); err != nil {
+		return fmt.Errorf("trust anchor file missing after bootstrap attempt: %w", err)
+	} else if info.Size() == 0 {
+		return fmt.Errorf("trust anchor file %s was created but is empty", keyPath)
+	}
+
 	return nil
 }
 
