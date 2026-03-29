@@ -19,12 +19,15 @@ import (
 
 // Manager handles ACME certificate issuance and renewal via the lego CLI.
 type Manager struct {
-	cfg *config.Config
+	cfg     *config.Config
+	onRenew func()
 }
 
-// NewManager creates a new instance of the ACME manager.
-func NewManager(cfg *config.Config) *Manager {
-	return &Manager{cfg: cfg}
+// NewManager creates a new ACME manager. onRenew is called after each successful
+// certificate renewal to allow the caller to reload dependent services.
+// onRenew may be nil if no post-renewal action is required.
+func NewManager(cfg *config.Config, onRenew func()) *Manager {
+	return &Manager{cfg: cfg, onRenew: onRenew}
 }
 
 // certExists checks if the certificate file is already present on the filesystem.
@@ -34,8 +37,18 @@ func (m *Manager) certExists() bool {
 	return err == nil
 }
 
+// getCertModTime returns the modification time of the certificate file, or zero time if absent.
+func (m *Manager) getCertModTime() time.Time {
+	certPath := filepath.Join(setup.DirLego, "certificates", m.cfg.ACMEDomain+".crt")
+	info, err := os.Stat(certPath)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
+}
+
 // buildCmd constructs the exec.Cmd for lego with required arguments and secure ENV injection.
-func (m *Manager) buildCmd(ctx context.Context, action, hook string) *exec.Cmd {
+func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 	args := []string{
 		"--accept-tos",
 		"--path", setup.DirLego,
@@ -46,11 +59,7 @@ func (m *Manager) buildCmd(ctx context.Context, action, hook string) *exec.Cmd {
 		action,
 	}
 
-	if hook != "" {
-		args = append(args, "--renew-hook", hook)
-	}
-
-	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
+	// #nosec G204 - Arguments are derived from validated internal configuration.
 	cmd := exec.CommandContext(ctx, "lego", args...)
 
 	// Inject the secret token exclusively into the lego process environment.
@@ -74,7 +83,7 @@ func (m *Manager) EnsureCert(ctx context.Context) error {
 	}
 
 	slog.Info("Obtaining initial TLS certificate", "domain", m.cfg.ACMEDomain)
-	cmd := m.buildCmd(ctx, "run", "")
+	cmd := m.buildCmd(ctx, "run")
 
 	if err := executeAndLog(ctx, cmd, "lego-run"); err != nil {
 		return fmt.Errorf("lego run failed: %w", err)
@@ -98,13 +107,21 @@ func (m *Manager) StartRenewTicker(ctx context.Context) {
 				return
 			case <-ticker.C:
 				slog.Debug("Executing scheduled TLS certificate renewal check")
-				// SIGUSR1 is used as a lightweight inter-process trigger: lego executes this hook
-				// only on successful renewal, and the supervisor handles the signal to restart AGH.
-				// PID 1 is hardcoded because this process is always the container entrypoint (supervisor).
-				// os.Getpid() cannot be used here because the hook runs inside lego's subprocess, not ours.
-				cmd := m.buildCmd(ctx, "renew", "kill -USR1 1")
+				beforeMtime := m.getCertModTime()
+				cmd := m.buildCmd(ctx, "renew")
+
 				if err := executeAndLog(ctx, cmd, "lego-renew"); err != nil {
 					slog.Error("Lego renewal check encountered an error", "error", err)
+					continue
+				}
+
+				// mtime comparison is reliable here because lego performs atomic certificate
+				// replacement via rename(2), guaranteeing mtime advances only on actual file change.
+				if m.getCertModTime().After(beforeMtime) {
+					slog.Info("TLS certificate renewed, triggering dependent service reload")
+					if m.onRenew != nil {
+						m.onRenew()
+					}
 				}
 			}
 		}
