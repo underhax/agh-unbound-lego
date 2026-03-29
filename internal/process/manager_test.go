@@ -1,13 +1,14 @@
 package process
 
 import (
-	"context"
 	"testing"
 	"time"
 )
 
 func TestManager_Lifecycle(t *testing.T) {
-	m := NewManager(context.Background())
+	// t.Context() is cancelled automatically when the test ends, preventing subprocess orphaning
+	// if the test panics or is killed before StopAll completes.
+	m := NewManager(t.Context())
 
 	// 1. Start a background process
 	err := m.Start("sleeper", "sleep", "10")

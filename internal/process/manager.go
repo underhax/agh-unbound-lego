@@ -25,7 +25,7 @@ type Manager struct {
 	isStopping bool
 }
 
-// NewManager initializes process tracking and telemetry channels.
+// NewManager creates a process table to track child lifecycles and route crash signals.
 func NewManager(ctx context.Context) *Manager {
 	return &Manager{
 		ctx:     ctx,
@@ -130,11 +130,10 @@ func (m *Manager) Restart(name, bin string, args ...string) error {
 	}
 
 	slog.Info("Restarting process", "name", name)
-	if err := m.stopOne(name, 5*time.Second); err == nil {
-		return m.Start(name, bin, args...)
+	if err := m.stopOne(name, 5*time.Second); err != nil {
+		return fmt.Errorf("failed to terminate process %s before restart: %w", name, err)
 	}
-
-	return fmt.Errorf("failed to terminate process %s before restart", name)
+	return m.Start(name, bin, args...)
 }
 
 // stopOne encapsulates the full SIGTERM -> wait -> SIGKILL escalation for a single process.
@@ -151,8 +150,9 @@ func (m *Manager) stopOne(name string, timeout time.Duration) error {
 	_ = cmd.Process.Signal(syscall.SIGTERM) //nolint:errcheck // Signal delivery is best-effort.
 	m.mu.Unlock()
 
-	attempts := int(timeout / (100 * time.Millisecond))
-	if util.PollAfterDelay(attempts, 100*time.Millisecond, func() bool {
+	// PollAfterDelayWithBackoff enforces the timeout via deadline, eliminating the fragile
+	// integer-division attempt calculation that silently truncates non-round timeout values.
+	if util.PollAfterDelayWithBackoff(timeout, 50*time.Millisecond, 500*time.Millisecond, func() bool {
 		m.mu.Lock()
 		_, exists := m.cmds[name]
 		m.mu.Unlock()
@@ -169,7 +169,7 @@ func (m *Manager) stopOne(name string, timeout time.Duration) error {
 	m.mu.Unlock()
 
 	// Allow one final scheduling quantum for the kernel to clean up after SIGKILL.
-	if util.PollAfterDelay(10, 100*time.Millisecond, func() bool {
+	if util.PollAfterDelayWithBackoff(1*time.Second, 100*time.Millisecond, 200*time.Millisecond, func() bool {
 		m.mu.Lock()
 		_, exists := m.cmds[name]
 		m.mu.Unlock()

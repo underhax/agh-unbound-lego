@@ -5,8 +5,8 @@ import (
 	"time"
 )
 
-// PollImmediate checks the condition first, then sleeps. Suitable for readiness probes
-// where the condition may already be true at the time of the first call.
+// PollImmediate loops with fixed delay. Suitable for readiness probes where the
+// condition may already be true at the first call.
 func PollImmediate(attempts int, delay time.Duration, condition func() bool) bool {
 	for range attempts {
 		if condition() {
@@ -17,7 +17,7 @@ func PollImmediate(attempts int, delay time.Duration, condition func() bool) boo
 	return false
 }
 
-// PollAfterDelay sleeps before each check. Suitable for post-signal termination probes
+// PollAfterDelay loops with fixed delay. Suitable for post-signal termination probes
 // where the target process needs time to handle the signal before the first check is meaningful.
 func PollAfterDelay(attempts int, delay time.Duration, condition func() bool) bool {
 	for range attempts {
@@ -29,9 +29,9 @@ func PollAfterDelay(attempts int, delay time.Duration, condition func() bool) bo
 	return false
 }
 
-// PollImmediateWithBackoff checks the condition first, then sleeps with exponentially
-// increasing delay capped at maxDelay. The total wait is strictly bounded by timeout.
-// Suitable for readiness probes where the service may already be up at first call.
+// PollImmediateWithBackoff loops with exponentially increasing delay capped at maxDelay.
+// The total wait is strictly bounded by timeout. Suitable for readiness probes where
+// the service may already be up at the first call.
 func PollImmediateWithBackoff(timeout, initialDelay, maxDelay time.Duration, condition func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	delay := initialDelay
@@ -50,10 +50,10 @@ func PollImmediateWithBackoff(timeout, initialDelay, maxDelay time.Duration, con
 	}
 }
 
-// PollAfterDelayWithBackoff sleeps first, then checks the condition, with exponentially
-// increasing delay capped at maxDelay. The total wait is strictly bounded by timeout.
-// Suitable for post-signal termination probes where the process needs at least one
-// scheduling quantum before the first check is meaningful.
+// PollAfterDelayWithBackoff loops with exponentially increasing delay capped at maxDelay.
+// The total wait is strictly bounded by timeout. Suitable for post-signal termination
+// probes where the process needs at least one scheduling quantum before the first check
+// is meaningful.
 func PollAfterDelayWithBackoff(timeout, initialDelay, maxDelay time.Duration, condition func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	delay := initialDelay

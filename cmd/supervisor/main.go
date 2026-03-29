@@ -156,9 +156,9 @@ func startServices(pm *process.Manager, aghArgs []string) error {
 		return fmt.Errorf("failed to start unbound: %w", err)
 	}
 
-	// Wait for Unbound to be ready instead of using a fixed sleep.
-	// We'll poll its DNS port for up to 5 seconds.
-	unboundReady := util.PollImmediate(50, 100*time.Millisecond, func() bool {
+	// Backoff avoids redundant DNS probes during Unbound's initialization window
+	// while still catching fast starts without unnecessary delay.
+	unboundReady := util.PollImmediateWithBackoff(10*time.Second, 10*time.Millisecond, 500*time.Millisecond, func() bool {
 		return health.CheckDNS("127.0.0.1:5053") == nil
 	})
 
