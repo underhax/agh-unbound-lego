@@ -16,8 +16,9 @@ import (
 
 const checkTimeout = 2 * time.Second
 
-// dnsDialer and httpClient are package-level to avoid repeated allocation across
-// the two CheckDNS calls made per healthcheck invocation (Unbound + AGH DNS port).
+// dnsDialer is used for UDP DNS queries, httpClient for TCP HTTP requests.
+// This separation is intentional: UDP and TCP require different dialers, and
+// connection pooling does not apply across protocol boundaries.
 var dnsDialer = &net.Dialer{Timeout: checkTimeout}
 var httpClient = &http.Client{
 	Timeout: checkTimeout,

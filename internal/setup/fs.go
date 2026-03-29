@@ -2,12 +2,14 @@
 package setup
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -37,16 +39,68 @@ func Directories() error {
 
 // UnboundConfig checks if the operational config exists.
 // If missing, it securely copies the default configuration file.
+// Then normalizes port and interface to the expected values.
 func UnboundConfig() error {
-	_, err := os.Stat(UnboundConfFile)
-	if err == nil {
-		return nil
-	}
-	if !os.IsNotExist(err) {
-		return fmt.Errorf("failed to stat unbound config: %w", err)
+	if _, err := os.Stat(UnboundConfFile); os.IsNotExist(err) {
+		if err := copyFile(UnboundDefaultConf, UnboundConfFile, 0o640); err != nil {
+			return err
+		}
 	}
 
-	return copyFile(UnboundDefaultConf, UnboundConfFile, 0o640)
+	return normalizeUnboundConfig()
+}
+
+// normalizeUnboundConfig enforces the expected port and interface values.
+// This prevents container failure if a user-provided config has non-standard values,
+// which could happen when copying config from another project.
+func normalizeUnboundConfig() error {
+	file, err := os.OpenFile(UnboundConfFile, os.O_RDWR, 0)
+	if err != nil {
+		return fmt.Errorf("failed to open unbound config for normalization: %w", err)
+	}
+	defer func() {
+		_ = file.Close() //nolint:errcheck // best-effort cleanup
+	}()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+
+		// Normalize port and interface to the expected values.
+		// These must be 5053 and 127.0.0.1 for the supervisor healthcheck to work.
+		switch {
+		case strings.HasPrefix(trimmed, "port:"):
+			line = "    port: 5053"
+		case strings.HasPrefix(trimmed, "interface:"):
+			line = "    interface: 127.0.0.1"
+		}
+		lines = append(lines, line)
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read unbound config: %w", err)
+	}
+
+	if _, err := file.Seek(0, 0); err != nil {
+		return fmt.Errorf("failed to seek unbound config: %w", err)
+	}
+
+	if err := file.Truncate(0); err != nil {
+		return fmt.Errorf("failed to truncate unbound config: %w", err)
+	}
+
+	for _, line := range lines {
+		if _, err := fmt.Fprintln(file, line); err != nil {
+			return fmt.Errorf("failed to write unbound config: %w", err)
+		}
+	}
+
+	if err := file.Sync(); err != nil {
+		return fmt.Errorf("failed to sync unbound config: %w", err)
+	}
+	return nil
 }
 
 // TrustAnchor initializes the DNSSEC root key for unbound.

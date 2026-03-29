@@ -13,8 +13,8 @@ func TestBuildCmd_WildcardAndEnv(t *testing.T) {
 	// Setup: Mock configuration with Lego enabled and explicit domain
 	cfg := &config.Config{
 		ACMEDomain: "dns.example.tld",
-		ACMEEmail:  "admin@test.local",
-		CFDNSToken: "secret-token",
+		ACMEEmail:  config.Secret("admin@test.local"),
+		CFDNSToken: config.Secret("secret-token"),
 		LegoEnable: true,
 	}
 	m := NewManager(cfg, nil)

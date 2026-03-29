@@ -36,6 +36,7 @@ func TestLoadConfig_Success(t *testing.T) {
 	if cfg.ACMEEmail != "admin@example.tld" {
 		t.Errorf("Expected email admin@example.tld, got %s", cfg.ACMEEmail) // Trimming verified
 	}
+	_ = string(cfg.ACMEEmail)
 	if !cfg.DisableECN {
 		t.Errorf("Expected DisableECN to be true")
 	}

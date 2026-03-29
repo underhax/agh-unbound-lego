@@ -58,7 +58,7 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 	args := []string{
 		"--accept-tos",
 		"--path", setup.DirLego,
-		"--email", m.cfg.ACMEEmail,
+		"--email", string(m.cfg.ACMEEmail),
 		"--dns", "cloudflare",
 		"--domains", m.cfg.ACMEDomain,
 		"--domains", "*." + m.cfg.ACMEDomain,
@@ -68,15 +68,7 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
 	cmd := exec.CommandContext(ctx, "lego", args...)
 
-	// Inject the secret token exclusively into the lego process environment.
-	// We only preserve critical variables like PATH to prevent leaking other supervisor secrets.
-	cmd.Env = []string{"CF_DNS_API_TOKEN=" + m.cfg.CFDNSToken}
-	if path := os.Getenv("PATH"); path != "" {
-		cmd.Env = append(cmd.Env, "PATH="+path)
-	}
-	if home := os.Getenv("HOME"); home != "" {
-		cmd.Env = append(cmd.Env, "HOME="+home)
-	}
+	cmd.Env = util.BuildCleanEnv("CF_DNS_API_TOKEN=" + string(m.cfg.CFDNSToken))
 
 	return cmd
 }

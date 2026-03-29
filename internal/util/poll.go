@@ -5,30 +5,6 @@ import (
 	"time"
 )
 
-// PollImmediate loops with fixed delay. Suitable for readiness probes where the
-// condition may already be true at the first call.
-func PollImmediate(attempts int, delay time.Duration, condition func() bool) bool {
-	for range attempts {
-		if condition() {
-			return true
-		}
-		time.Sleep(delay)
-	}
-	return false
-}
-
-// PollAfterDelay loops with fixed delay. Suitable for post-signal termination probes
-// where the target process needs time to handle the signal before the first check is meaningful.
-func PollAfterDelay(attempts int, delay time.Duration, condition func() bool) bool {
-	for range attempts {
-		time.Sleep(delay)
-		if condition() {
-			return true
-		}
-	}
-	return false
-}
-
 // PollImmediateWithBackoff loops with exponentially increasing delay capped at maxDelay.
 // The total wait is strictly bounded by timeout. Suitable for readiness probes where
 // the service may already be up at the first call.
