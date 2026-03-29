@@ -112,16 +112,18 @@ func CheckDNS(address string) error {
 	//nolint:errcheck // Socket is closed purely to release resources; cleanup errors are not actionable.
 	defer conn.Close()
 
+	// SetDeadline covers both Write and Read, bounding the entire exchange to 2 seconds.
+	// SetReadDeadline alone would leave Write unprotected if the kernel UDP send buffer saturates.
+	if err = conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return fmt.Errorf("failed to set deadline: %w", err)
+	}
+
 	// RFC 9476 standardized QNAME 'dns.healthcheck.arpa' (Type A, Class IN).
 	// Resolvers automatically exclude this domain from query logs to maintain clean statistics.
 	query := []byte("\xAA\xAA\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03dns\x0bhealthcheck\x04arpa\x00\x00\x01\x00\x01")
 
 	if _, err = conn.Write(query); err != nil {
 		return fmt.Errorf("failed to send DNS query: %w", err)
-	}
-
-	if err = conn.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
-		return fmt.Errorf("failed to set read deadline: %w", err)
 	}
 
 	buf := make([]byte, 512)
