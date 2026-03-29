@@ -1,0 +1,8 @@
+data/
+secrets/
+*.md
+docker-compose.dev.yaml
+/build/supervisor
+.git/
+.idea/
+.vscode/

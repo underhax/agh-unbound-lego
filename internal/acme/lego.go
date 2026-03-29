@@ -59,7 +59,7 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 		action,
 	}
 
-	// #nosec G204 - Arguments are derived from validated internal configuration.
+	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
 	cmd := exec.CommandContext(ctx, "lego", args...)
 
 	// Inject the secret token exclusively into the lego process environment.

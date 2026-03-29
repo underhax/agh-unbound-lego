@@ -11,7 +11,8 @@ import (
 )
 
 // pipeLogger consumes lines from an io.ReadCloser and emits them as structured slog entries.
-// It maintains process context to avoid log interleaving in the supervisor's output.
+// ctx is threaded through so log emission stops when the supervisor root context is cancelled,
+// preventing goroutine leaks if the pipe outlives the managed process.
 func pipeLogger(ctx context.Context, name, stream string, r io.ReadCloser) {
 	defaultLevel := slog.LevelInfo
 	var parser util.LevelParser
