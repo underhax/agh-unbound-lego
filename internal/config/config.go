@@ -16,11 +16,16 @@ import (
 // DefaultSecretsDir points to the standard location for Docker Swarm/Compose secrets.
 const DefaultSecretsDir = "/run/secrets"
 
+// Secret wraps sensitive strings to prevent accidental logging via %v or %+v.
+type Secret string
+
+func (s Secret) String() string { return "***REDACTED***" }
+
 // Config holds the validated environment and secret parameters.
 type Config struct {
 	ACMEDomain string
-	ACMEEmail  string
-	CFDNSToken string
+	ACMEEmail  Secret
+	CFDNSToken Secret
 	LogLevel   slog.Level
 	DisableECN bool
 	LegoEnable bool
@@ -91,8 +96,8 @@ func Load(secretsDir string) (*Config, error) {
 		ACMEDomain: domain,
 		LogLevel:   logLevel,
 		DisableECN: disableECN,
-		ACMEEmail:  email,
-		CFDNSToken: cfToken,
+		ACMEEmail:  Secret(email),
+		CFDNSToken: Secret(cfToken),
 		LegoEnable: legoEnable,
 	}, nil
 }
