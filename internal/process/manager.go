@@ -109,7 +109,7 @@ func (m *Manager) monitor(name string, cmd *exec.Cmd) {
 // Restart performs a SIGTERM followed by a re-invocation of the process.
 func (m *Manager) Restart(name, bin string, args ...string) error {
 	m.mu.Lock()
-	cmd, exists := m.cmds[name]
+	_, exists := m.cmds[name]
 	m.mu.Unlock()
 
 	if !exists {
@@ -117,30 +117,55 @@ func (m *Manager) Restart(name, bin string, args ...string) error {
 	}
 
 	slog.Info("Restarting process", "name", name)
-	_ = cmd.Process.Signal(syscall.SIGTERM) //nolint:errcheck // Signal delivery is best-effort.
-
-	if m.waitForExit(name, 50, 100*time.Millisecond) {
-		return m.Start(name, bin, args...)
-	}
-
-	slog.Warn("Process failed to stop gracefully during restart, forcing SIGKILL", "name", name)
-	_ = cmd.Process.Kill() //nolint:errcheck // Kill delivery is best-effort.
-
-	if m.waitForExit(name, 50, 100*time.Millisecond) {
+	if err := m.stopOne(name, 5*time.Second); err == nil {
 		return m.Start(name, bin, args...)
 	}
 
 	return fmt.Errorf("failed to terminate process %s before restart", name)
 }
 
-// waitForExit polls the process map to confirm termination.
-func (m *Manager) waitForExit(name string, attempts int, delay time.Duration) bool {
-	return util.PollAfterDelay(attempts, delay, func() bool {
+// stopOne encapsulates the full SIGTERM -> wait -> SIGKILL escalation for a single process.
+// The signal is sent while holding the mutex to prevent a PID reuse race between
+// process exit detection in monitor() and signal delivery.
+func (m *Manager) stopOne(name string, timeout time.Duration) error {
+	m.mu.Lock()
+	cmd, exists := m.cmds[name]
+	if !exists {
+		m.mu.Unlock()
+		return nil
+	}
+	slog.Info("Stopping process", "name", name, "pid", cmd.Process.Pid)
+	_ = cmd.Process.Signal(syscall.SIGTERM) //nolint:errcheck // Signal delivery is best-effort.
+	m.mu.Unlock()
+
+	attempts := int(timeout / (100 * time.Millisecond))
+	if util.PollAfterDelay(attempts, 100*time.Millisecond, func() bool {
 		m.mu.Lock()
 		_, exists := m.cmds[name]
 		m.mu.Unlock()
 		return !exists
-	})
+	}) {
+		return nil
+	}
+
+	slog.Warn("Process failed to stop gracefully, forcing SIGKILL", "name", name)
+	m.mu.Lock()
+	if cmd, exists := m.cmds[name]; exists {
+		_ = cmd.Process.Kill() //nolint:errcheck // Kill delivery is best-effort.
+	}
+	m.mu.Unlock()
+
+	// Allow one final scheduling quantum for the kernel to clean up after SIGKILL.
+	if util.PollAfterDelay(10, 100*time.Millisecond, func() bool {
+		m.mu.Lock()
+		_, exists := m.cmds[name]
+		m.mu.Unlock()
+		return !exists
+	}) {
+		return nil
+	}
+
+	return fmt.Errorf("process %s refused to die after SIGKILL", name)
 }
 
 // StopAll executes a sequential LIFO shutdown to respect service dependencies.
@@ -151,41 +176,13 @@ func (m *Manager) StopAll(timeout time.Duration) {
 	copy(shutdownOrder, m.order)
 	m.mu.Unlock()
 
-	// Shutdown in reverse order: AGH should stop before its upstream (unbound).
+	// Shutdown in reverse order: AGH must stop before its upstream resolver (unbound).
 	for i := len(shutdownOrder) - 1; i >= 0; i-- {
-		deadline := time.Now().Add(timeout)
 		name := shutdownOrder[i]
-
-		m.mu.Lock()
-		cmd, exists := m.cmds[name]
-		m.mu.Unlock()
-
-		if !exists {
-			continue
-		}
-
-		slog.Info("Stopping process", "name", name, "pid", cmd.Process.Pid)
-		_ = cmd.Process.Signal(syscall.SIGTERM) //nolint:errcheck // Signal delivery is best-effort.
-
-		for time.Now().Before(deadline) {
-			m.mu.Lock()
-			_, stillRunning := m.cmds[name]
-			m.mu.Unlock()
-
-			if !stillRunning {
-				break
-			}
-			time.Sleep(100 * time.Millisecond)
+		if err := m.stopOne(name, timeout); err != nil {
+			slog.Error("Failed to stop process cleanly", "name", name, "error", err)
 		}
 	}
-
-	// Escalate to SIGKILL for any process that failed to exit within the deadline.
-	m.mu.Lock()
-	for name, cmd := range m.cmds {
-		slog.Warn("Forcing SIGKILL", "name", name)
-		_ = cmd.Process.Kill() //nolint:errcheck // Kill delivery is best-effort.
-	}
-	m.mu.Unlock()
 
 	m.wg.Wait()
 }
