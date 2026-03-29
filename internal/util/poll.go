@@ -1,4 +1,4 @@
-// Package util provides general-purpose polling primitives used across the supervisor.
+// Package util provides general-purpose primitives used across the supervisor.
 package util
 
 import "time"
