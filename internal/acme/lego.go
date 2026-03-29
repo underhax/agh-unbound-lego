@@ -3,10 +3,8 @@
 package acme
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -16,6 +14,7 @@ import (
 
 	"github.com/webstudiobond/agh-unbound-lego/internal/config"
 	"github.com/webstudiobond/agh-unbound-lego/internal/setup"
+	"github.com/webstudiobond/agh-unbound-lego/internal/util"
 )
 
 // Manager handles ACME certificate issuance and renewal via the lego CLI.
@@ -134,11 +133,11 @@ func executeAndLog(ctx context.Context, cmd *exec.Cmd, processName string) error
 
 	go func() {
 		defer wg.Done()
-		captureStream(ctx, stdout, slog.LevelInfo, processName)
+		util.StreamToLog(ctx, processName, "stdout", stdout, slog.LevelInfo, nil)
 	}()
 	go func() {
 		defer wg.Done()
-		captureStream(ctx, stderr, slog.LevelWarn, processName)
+		util.StreamToLog(ctx, processName, "stderr", stderr, slog.LevelWarn, nil)
 	}()
 
 	err = cmd.Wait()
@@ -148,11 +147,4 @@ func executeAndLog(ctx context.Context, cmd *exec.Cmd, processName string) error
 		return fmt.Errorf("process execution failed: %w", err)
 	}
 	return nil
-}
-
-func captureStream(ctx context.Context, r io.Reader, level slog.Level, name string) {
-	scanner := bufio.NewScanner(r)
-	for scanner.Scan() {
-		slog.Log(ctx, level, scanner.Text(), "process", name)
-	}
 }
