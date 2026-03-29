@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -22,25 +21,9 @@ import (
 	"github.com/webstudiobond/agh-unbound-lego/internal/util"
 )
 
-func setLogger(level string) {
-	var l slog.Level
-	switch strings.ToLower(level) {
-	case "debug":
-		l = slog.LevelDebug
-	case "info":
-		l = slog.LevelInfo
-	case "warn":
-		l = slog.LevelWarn
-	case "error":
-		l = slog.LevelError
-	default:
-		// Ensures programmatic misconfigurations trigger immediate crash rather than silent suppression.
-		fmt.Fprintf(os.Stderr, "FATAL: unsupported log level requested: %s\n", level)
-		os.Exit(1)
-	}
-
+func setLogger(level slog.Level) {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: l,
+		Level: level,
 	}))
 	slog.SetDefault(logger)
 }
@@ -73,7 +56,7 @@ func performHealthcheck() {
 
 // run encapsulates the supervisor's lifecycle to guarantee deferred cleanups prior to os.Exit.
 func run() (int, error) {
-	setLogger("info")
+	setLogger(slog.LevelInfo)
 
 	cfg, err := config.Load(config.DefaultSecretsDir)
 	if err != nil {
@@ -88,7 +71,7 @@ func run() (int, error) {
 		}
 	}
 
-	slog.Info("Supervisor starting", "domain", cfg.ACMEDomain, "log_level", cfg.LogLevel)
+	slog.Info("Supervisor starting", "domain", cfg.ACMEDomain, "log_level", cfg.LogLevel.String())
 
 	if err := initInfrastructure(); err != nil {
 		return 1, err
