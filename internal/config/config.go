@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -18,9 +19,9 @@ const DefaultSecretsDir = "/run/secrets"
 // Config holds the validated environment and secret parameters.
 type Config struct {
 	ACMEDomain string
-	LogLevel   string
 	ACMEEmail  string
 	CFDNSToken string
+	LogLevel   slog.Level
 	DisableECN bool
 	LegoEnable bool
 }
@@ -28,16 +29,24 @@ type Config struct {
 // Load reads configuration from the environment and secrets directory.
 // It fails fast if required configurations or secrets are missing.
 func Load(secretsDir string) (*Config, error) {
-	logLevel := os.Getenv("LOG_LEVEL")
-	if logLevel == "" {
-		logLevel = "info" // Default safe level
-	} else {
-		// Strict validation prevents silent fallbacks masking configuration drifts.
-		switch strings.ToLower(logLevel) {
-		case "debug", "info", "warn", "error":
-		default:
-			return nil, fmt.Errorf("invalid LOG_LEVEL provided: %s", logLevel)
-		}
+	rawLogLevel := os.Getenv("LOG_LEVEL")
+	if rawLogLevel == "" {
+		rawLogLevel = "info" // Default safe level
+	}
+
+	var logLevel slog.Level
+	// Strict validation prevents silent fallbacks masking configuration drifts.
+	switch strings.ToLower(rawLogLevel) {
+	case "debug":
+		logLevel = slog.LevelDebug
+	case "info":
+		logLevel = slog.LevelInfo
+	case "warn":
+		logLevel = slog.LevelWarn
+	case "error":
+		logLevel = slog.LevelError
+	default:
+		return nil, fmt.Errorf("invalid LOG_LEVEL provided: %s", rawLogLevel)
 	}
 
 	var legoEnable, disableECN bool
