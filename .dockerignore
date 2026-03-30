@@ -1,8 +1,14 @@
 data/
 secrets/
 *.md
+*.txt
+*.bak
+*.yml
 docker-compose.dev.yaml
 /build/supervisor
+LICENSE
 .git/
 .idea/
 .vscode/
+.DS_Store
+._*

@@ -30,8 +30,8 @@ This container is hardened by design, adhering strictly to the principle of leas
 **Exposed Ports:**
 * `127.0.0.1:8002:80/tcp`, `127.0.0.1:6443:443/tcp|udp`: AdGuard Home Admin UI and DNS-over-HTTPS (DoH).
 * `853:853/tcp|udp`: DNS-over-TLS (DoT) and DNS-over-QUIC (DoQ) exposed publicly.
-* Standard port 53 DHCP ports are commented out by default but available for legacy clients if needed.
-* `5443:5443/tcp|udp`: DNSCrypt ports  are commented out by default but available.
+* Standard port 53 and DHCP ports are commented out by default but available for legacy clients if needed.
+* `5443:5443/tcp|udp`: DNSCrypt ports are commented out by default but available.
 * `127.0.0.1:6060:6060/tcp`: Pprof endpoints commented out by default but available for memory/CPU profiling during active troubleshooting.
 
 **Mounted Volumes:**
