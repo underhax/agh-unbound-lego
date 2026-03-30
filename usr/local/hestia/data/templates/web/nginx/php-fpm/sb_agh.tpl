@@ -3,6 +3,12 @@
 # DO NOT MODIFY THIS FILE! CHANGES WILL BE LOST WHEN REBUILDING DOMAINS #
 #=======================================================================#
 
+# Defines a shared memory zone for rate limiting.
+# - $binary_remote_addr: Uses client's IP address as the key (efficient, binary format)
+# - zone=agh_login_limit:10m: Stores state for up to 10MB of IPs (~160k unique IPs)
+# - rate=10r/s: Allows 10 requests per second per IP (sufficient for normal admin usage)
+limit_req_zone $binary_remote_addr zone=agh_login_limit:10m rate=10r/s;
+
 server {
     listen      %ip%:80;
 
@@ -107,6 +113,23 @@ server {
     # scoped to '/' — without it, session cookies will not be sent back through the proxy prefix.
     # access_log is disabled to avoid leaking admin session activity into shared web logs.
     location /agh-secret-path/ {
+        # IP-based access restriction (uncomment and configure).
+        # Multiple 'allow' directives are supported - each IP on a new line.
+        # Requests from non-listed IPs will be denied.
+        # Example:
+        # allow 192.168.1.1;
+        # allow 10.0.0.50;
+        # deny all;
+
+        # Rate limiting prevents brute-force attacks on admin login.
+        # - zone=agh_login_limit: References the shared zone defined above
+        # - burst=30: Allows bursts up to 30 requests (AGH admin main page ~16 requests,
+        #   plus margin for HTTP/2/HTTP3 multiplexing and normal navigation)
+        # - delay=25: Queues excess requests instead of dropping; 25 processed immediately,
+        #   remaining 5 queued - prevents false positives that could trigger fail2ban
+        # - To drop excess immediately instead of queuing, use 'nodelay' instead of 'delay'
+        limit_req zone=agh_login_limit burst=30 delay=25;
+
         proxy_cookie_path / /agh-secret-path/;
         proxy_pass http://127.0.0.1:8002/;
         proxy_redirect / /agh-secret-path/;
