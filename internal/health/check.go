@@ -40,7 +40,7 @@ type aghConfig struct {
 	} `yaml:"dns"`
 }
 
-// Checker validates the operational status of critical services.
+// Checker provides external readiness probes decoupled from the internal process supervision tree.
 type Checker struct {
 	UnboundPort string
 	AGHConfPath string
@@ -91,7 +91,7 @@ func (c *Checker) Run() (err error) {
 	return nil
 }
 
-// resolveEndpoints parses the AGH configuration to determine the active Web and DNS ports.
+// resolveEndpoints mitigates hardcoded assumptions by extracting dynamic port assignments negotiated during the setup wizard.
 func (c *Checker) resolveEndpoints() (webURL, dnsPort string, err error) {
 	webURL = "http://127.0.0.1:3000/"
 
