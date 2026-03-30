@@ -8,7 +8,8 @@ SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 ARG TARGETARCH
 
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
 
 # Compile static Go supervisor
