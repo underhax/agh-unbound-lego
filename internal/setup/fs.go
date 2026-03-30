@@ -2,7 +2,6 @@
 package setup
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -54,52 +53,37 @@ func UnboundConfig() error {
 // This prevents container failure if a user-provided config has non-standard values,
 // which could happen when copying config from another project.
 func normalizeUnboundConfig() error {
-	file, err := os.OpenFile(UnboundConfFile, os.O_RDWR, 0)
+	data, err := os.ReadFile(UnboundConfFile)
 	if err != nil {
-		return fmt.Errorf("failed to open unbound config for normalization: %w", err)
+		return fmt.Errorf("failed to read unbound config: %w", err)
 	}
-	defer func() {
-		_ = file.Close() //nolint:errcheck // best-effort cleanup
-	}()
 
-	var lines []string
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := scanner.Text()
+	var result []string
+	for _, line := range strings.Split(string(data), "\n") { //nolint:modernize // strings.SplitSeq requires Go 1.24+
 		trimmed := strings.TrimSpace(line)
 
-		// Normalize port and interface to the expected values.
-		// These must be 5053 and 127.0.0.1 for the supervisor healthcheck to work.
+		// Port and interface must be 5053 and 127.0.0.1 for the supervisor healthcheck to work.
 		switch {
 		case strings.HasPrefix(trimmed, "port:"):
 			line = "    port: 5053"
 		case strings.HasPrefix(trimmed, "interface:"):
 			line = "    interface: 127.0.0.1"
 		}
-		lines = append(lines, line)
+		result = append(result, line)
 	}
 
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("failed to read unbound config: %w", err)
+	// Atomic write: temp file + rename prevents data loss on crash between truncate and write.
+	// UnboundConfFile is a constant, safe from path traversal.
+	tmpPath := UnboundConfFile + ".tmp"
+	//nolint:gosec // G306: temp file 0600 is stricter than final 0640, G703: path is constant
+	if err := os.WriteFile(tmpPath, []byte(strings.Join(result, "\n")), 0o600); err != nil {
+		return fmt.Errorf("failed to write temp unbound config: %w", err)
 	}
 
-	if _, err := file.Seek(0, 0); err != nil {
-		return fmt.Errorf("failed to seek unbound config: %w", err)
+	if err := os.Rename(tmpPath, UnboundConfFile); err != nil {
+		return fmt.Errorf("failed to rename unbound config: %w", err)
 	}
 
-	if err := file.Truncate(0); err != nil {
-		return fmt.Errorf("failed to truncate unbound config: %w", err)
-	}
-
-	for _, line := range lines {
-		if _, err := fmt.Fprintln(file, line); err != nil {
-			return fmt.Errorf("failed to write unbound config: %w", err)
-		}
-	}
-
-	if err := file.Sync(); err != nil {
-		return fmt.Errorf("failed to sync unbound config: %w", err)
-	}
 	return nil
 }
 

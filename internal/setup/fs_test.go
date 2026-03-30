@@ -7,6 +7,8 @@ import (
 )
 
 func TestCopyFile(t *testing.T) {
+	t.Parallel()
+
 	tempDir := t.TempDir()
 	src := filepath.Join(tempDir, "source.conf")
 	dst := filepath.Join(tempDir, "dest.conf")

@@ -95,7 +95,7 @@ func run() (int, error) {
 		}
 	}
 
-	if err := startServices(pm, aghArgs); err != nil {
+	if err := startServices(ctx, pm, aghArgs); err != nil {
 		pm.StopAll(5 * time.Second)
 		return 1, err
 	}
@@ -151,7 +151,7 @@ func initLego(ctx context.Context, cfg *config.Config, pm *process.Manager, aghA
 }
 
 // startServices launches unbound and AdGuard Home in the correct order.
-func startServices(pm *process.Manager, aghArgs []string) error {
+func startServices(ctx context.Context, pm *process.Manager, aghArgs []string) error {
 	if err := pm.Start("unbound", "unbound", "-d", "-c", setup.UnboundConfFile); err != nil {
 		return fmt.Errorf("failed to start unbound: %w", err)
 	}
@@ -159,7 +159,7 @@ func startServices(pm *process.Manager, aghArgs []string) error {
 	// Backoff avoids redundant DNS probes during Unbound's initialization window
 	// while still catching fast starts without unnecessary delay.
 	unboundReady := util.PollImmediateWithBackoff(10*time.Second, 10*time.Millisecond, 500*time.Millisecond, func() bool {
-		return health.CheckDNS("127.0.0.1:5053") == nil
+		return health.CheckDNS(ctx, "127.0.0.1:5053") == nil
 	})
 
 	if !unboundReady {

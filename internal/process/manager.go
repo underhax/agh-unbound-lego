@@ -141,14 +141,16 @@ func (m *Manager) stopOne(name string, timeout time.Duration) error {
 	_ = cmd.Process.Signal(syscall.SIGTERM) //nolint:errcheck // Signal delivery is best-effort.
 	m.mu.Unlock()
 
-	// PollAfterDelayWithBackoff enforces the timeout via deadline, eliminating the fragile
-	// integer-division attempt calculation that silently truncates non-round timeout values.
-	if util.PollAfterDelayWithBackoff(timeout, 50*time.Millisecond, 500*time.Millisecond, func() bool {
+	exited := func() bool {
 		m.mu.Lock()
 		_, exists := m.cmds[name]
 		m.mu.Unlock()
 		return !exists
-	}) {
+	}
+
+	// PollAfterDelayWithBackoff enforces the timeout via deadline, eliminating the fragile
+	// integer-division attempt calculation that silently truncates non-round timeout values.
+	if util.PollAfterDelayWithBackoff(timeout, 50*time.Millisecond, 500*time.Millisecond, exited) {
 		return nil
 	}
 
@@ -160,12 +162,7 @@ func (m *Manager) stopOne(name string, timeout time.Duration) error {
 	m.mu.Unlock()
 
 	// Allow one final scheduling quantum for the kernel to clean up after SIGKILL.
-	if util.PollAfterDelayWithBackoff(1*time.Second, 100*time.Millisecond, 200*time.Millisecond, func() bool {
-		m.mu.Lock()
-		_, exists := m.cmds[name]
-		m.mu.Unlock()
-		return !exists
-	}) {
+	if util.PollAfterDelayWithBackoff(1*time.Second, 100*time.Millisecond, 200*time.Millisecond, exited) {
 		return nil
 	}
 

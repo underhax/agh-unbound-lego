@@ -35,11 +35,11 @@ func startMockDNS(t *testing.T) (addr string, cleanup func()) {
 }
 
 func TestChecker_Run(t *testing.T) {
-	// Use dynamic ports to avoid collisions with local services.
+	t.Parallel()
+
 	unboundPort, closeUnbound := startMockDNS(t)
 	defer closeUnbound()
 
-	// Mock AGH HTTP server to verify status code handling.
 	aghSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))

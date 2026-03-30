@@ -11,7 +11,6 @@ import (
 )
 
 func TestPipeLogger_StructuredOutput(t *testing.T) {
-	// Create a buffer to capture the supervisor's JSON output
 	oldLogger := slog.Default()
 	defer slog.SetDefault(oldLogger)
 	var buf bytes.Buffer
@@ -22,13 +21,11 @@ func TestPipeLogger_StructuredOutput(t *testing.T) {
 	pr, pw := io.Pipe()
 
 	done := make(chan struct{})
-	// Run pipeLogger in a goroutine as it blocks until EOF
 	go func() {
 		pipeLogger(context.Background(), "test-proc", "stdout", pr)
 		close(done)
 	}()
 
-	// Simulate process output
 	testLine := "service started successfully"
 	if _, err := pw.Write([]byte(testLine + "\n")); err != nil {
 		t.Fatalf("Failed to write to pipe: %v", err)
@@ -38,16 +35,12 @@ func TestPipeLogger_StructuredOutput(t *testing.T) {
 	}
 	<-done // Ensure pipeLogger has finished all slog calls
 
-	// Wait for processing
 	var logEntry map[string]any
-	// Since processing is asynchronous, we need to ensure the scanner finishes
-	// In a test environment, checking the buffer after Pipe close is sufficient.
 
 	if err := json.Unmarshal(buf.Bytes(), &logEntry); err != nil {
 		t.Fatalf("Failed to parse log as JSON: %v", err)
 	}
 
-	// Assertions on metadata and content
 	if logEntry["msg"] != testLine {
 		t.Errorf("Expected message %q, got %q", testLine, logEntry["msg"])
 	}
