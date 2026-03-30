@@ -36,9 +36,7 @@ func Directories() error {
 	return nil
 }
 
-// UnboundConfig checks if the operational config exists.
-// If missing, it securely copies the default configuration file.
-// Then normalizes port and interface to the expected values.
+// UnboundConfig guarantees a deterministic baseline state against potential volume-mount tampering or missing configs.
 func UnboundConfig() error {
 	if _, err := os.Stat(UnboundConfFile); os.IsNotExist(err) {
 		if err := copyFile(UnboundDefaultConf, UnboundConfFile, 0o640); err != nil {
@@ -73,11 +71,22 @@ func normalizeUnboundConfig() error {
 	}
 
 	// Atomic write: temp file + rename prevents data loss on crash between truncate and write.
-	// UnboundConfFile is a constant, safe from path traversal.
+	// O_EXCL prevents symlink hijacking if a malicious actor pre-creates the temp path.
 	tmpPath := UnboundConfFile + ".tmp"
-	//nolint:gosec // G306: temp file 0600 is stricter than final 0640, G703: path is constant
-	if err := os.WriteFile(tmpPath, []byte(strings.Join(result, "\n")), 0o600); err != nil {
-		return fmt.Errorf("failed to write temp unbound config: %w", err)
+	// #nosec G304 -- tmpPath is a constant, safe from path traversal.
+	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	if err != nil {
+		return fmt.Errorf("failed to create temp unbound config: %w", err)
+	}
+	if _, err := tmpFile.WriteString(strings.Join(result, "\n")); err != nil {
+		cerr := tmpFile.Close()
+		if cerr != nil {
+			return fmt.Errorf("write failed: %w, close failed: %w", err, cerr)
+		}
+		return fmt.Errorf("failed to write temp unbound config data: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp unbound config: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, UnboundConfFile); err != nil {
@@ -115,7 +124,7 @@ func TrustAnchor() error {
 	return nil
 }
 
-// copyFile handles the secure transfer of file contents and permissions.
+// copyFile performs an atomic-like file clone ensuring sensitive file permissions are strictly duplicated.
 func copyFile(src, dst string, perm os.FileMode) (err error) {
 	// #nosec G304 -- Paths are provided by internal constants, not user input.
 	sourceFile, err := os.Open(src)

@@ -119,7 +119,7 @@ func run() (int, error) {
 	}
 }
 
-// initInfrastructure prepares the filesystem and service configurations.
+// initInfrastructure ensures the container environment satisfies the strict execution assumptions of Unbound and AGH.
 func initInfrastructure() error {
 	if err := setup.Directories(); err != nil {
 		return fmt.Errorf("failed to initialize directories: %w", err)
@@ -133,7 +133,7 @@ func initInfrastructure() error {
 	return nil
 }
 
-// initLego handles initial certificate acquisition and renewal scheduling.
+// initLego integrates ACME provisions into the supervisor lifecycle prior to network component activation.
 // onRenew restarts AGH directly without routing through OS signals,
 // removing the shell-execution surface of the --renew-hook mechanism.
 func initLego(ctx context.Context, cfg *config.Config, pm *process.Manager, aghArgs []string) error {
@@ -150,7 +150,7 @@ func initLego(ctx context.Context, cfg *config.Config, pm *process.Manager, aghA
 	return nil
 }
 
-// startServices launches unbound and AdGuard Home in the correct order.
+// startServices orchestrates the specific startup dependency chain where AGH relies on Unbound's availability.
 func startServices(ctx context.Context, pm *process.Manager, aghArgs []string) error {
 	if err := pm.Start("unbound", "unbound", "-d", "-c", setup.UnboundConfFile); err != nil {
 		return fmt.Errorf("failed to start unbound: %w", err)

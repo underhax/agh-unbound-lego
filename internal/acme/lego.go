@@ -91,7 +91,7 @@ func (m *Manager) EnsureCert(ctx context.Context) error {
 	return nil
 }
 
-// StartRenewTicker runs a background routine that checks for renewal daily.
+// StartRenewTicker aligns polling thresholds with Cloudflare API allowances and Let's Encrypt throttling.
 func (m *Manager) StartRenewTicker(ctx context.Context) {
 	go func() {
 		// Once-daily polling matches lego's built-in 30-day renewal threshold.
@@ -126,7 +126,7 @@ func (m *Manager) StartRenewTicker(ctx context.Context) {
 	}()
 }
 
-// executeAndLog runs the command and streams its output directly into the structured logger.
+// executeAndLog bridges the CLI output of the lego binary into the supervisor's unified structured logging namespace.
 func executeAndLog(ctx context.Context, cmd *exec.Cmd, processName string) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
