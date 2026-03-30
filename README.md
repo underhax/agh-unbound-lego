@@ -202,7 +202,28 @@ curl --proto '=https' -sSLf -o /usr/local/hestia/data/templates/web/nginx/php-fp
 curl --proto '=https' -sSLf -o /usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl https://raw.githubusercontent.com/webstudiobond/agh-unbound-lego/main/usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl
 ```
 
+#### Restrict Admin Panel Access (Optional)
+
+By default, the admin panel is protected by a secret path (`/agh-secret-path/`).
+
 Edit `sb_agh.tpl` and replace `agh-secret-path` with your own unique path.
+
+To add IP-based restriction:
+
+1. Edit the template:
+   ```bash
+   nano /usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl
+   ```
+
+2. Uncomment and add your trusted IPs (one per line):
+   ```nginx
+   location /agh-secret-path/ {
+       allow 192.168.1.2;    # Your IP
+       allow 10.0.0.50;      # Your IP 2
+       deny all;
+   ```
+
+**Security:** Rate limiting is already enabled in the template (10 req/sec, burst 30).
 
 Apply the template to your domain:
 

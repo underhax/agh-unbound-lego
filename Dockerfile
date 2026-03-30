@@ -27,6 +27,10 @@ COPY --from=agh /opt/adguardhome/AdGuardHome /opt/adguardhome/AdGuardHome
 COPY --from=lego /lego /usr/local/bin/lego
 COPY --from=builder /build/supervisor /usr/local/bin/supervisor
 
+# Validate copied binaries exist and are executable
+RUN /opt/adguardhome/AdGuardHome --version \
+    && /usr/local/bin/lego --version
+
 # Single unprivileged user manages the supervisor and child processes.
 # hadolint ignore=DL3018
 RUN apk add --no-cache ca-certificates unbound \
@@ -35,8 +39,7 @@ RUN apk add --no-cache ca-certificates unbound \
     && mkdir -p /opt/adguardhome/work /opt/adguardhome/conf /opt/lego /opt/unbound /etc/unbound \
     && chown -R appuser:appgroup /opt/adguardhome /opt/lego /opt/unbound /etc/unbound
 
-COPY build/unbound.conf.default /etc/unbound/unbound.conf.default
-RUN chown appuser:appgroup /etc/unbound/unbound.conf.default
+COPY --chown=appuser:appgroup build/unbound.conf.default /etc/unbound/unbound.conf.default
 
 USER appuser
 
