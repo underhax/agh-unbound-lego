@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -105,6 +106,8 @@ func Load(secretsDir string) (*Config, error) {
 // readSecret securely reads a secret from a file mounted by Docker.
 // Trims whitespace/newlines to prevent unexpected authentication failures.
 func readSecret(dir, filename string) (string, error) {
+	const maxSecretSize = 4096 // Defence in depth: prevents OOM if a mount error exposes a large file.
+
 	path := filepath.Clean(filepath.Join(dir, filename))
 
 	// Prevent directory traversal attacks if filename was ever dynamic
@@ -113,9 +116,21 @@ func readSecret(dir, filename string) (string, error) {
 		return "", fmt.Errorf("invalid secret path: %s", path)
 	}
 
-	data, err := os.ReadFile(path)
+	// #nosec G304 -- path is validated above against directory traversal.
+	f, err := os.Open(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to open secret '%s': %w", filename, err)
+	}
+	defer f.Close() //nolint:errcheck // Read-only file; close errors are not actionable.
+
+	limited := io.LimitReader(f, maxSecretSize+1)
+	data, err := io.ReadAll(limited)
 	if err != nil {
 		return "", fmt.Errorf("failed to read secret '%s': %w", filename, err)
+	}
+
+	if len(data) > maxSecretSize {
+		return "", fmt.Errorf("secret '%s' exceeds %d bytes", filename, maxSecretSize)
 	}
 
 	secret := strings.TrimSpace(string(data))

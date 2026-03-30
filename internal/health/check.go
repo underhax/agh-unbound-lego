@@ -3,6 +3,7 @@ package health
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -48,7 +49,7 @@ type Checker struct {
 // Run executes the conditional healthcheck logic.
 // It adapts to the AGH lifecycle: Setup Wizard (port 3000) vs Operational (parsed from YAML).
 func (c *Checker) Run() (err error) {
-	if chkErr := CheckDNS(c.UnboundPort); chkErr != nil {
+	if chkErr := CheckDNS(context.Background(), c.UnboundPort); chkErr != nil {
 		return fmt.Errorf("unbound DNS port check failed: %w", chkErr)
 	}
 
@@ -82,7 +83,7 @@ func (c *Checker) Run() (err error) {
 	}
 
 	if aghDNSPort != "" {
-		if err := CheckDNS(aghDNSPort); err != nil {
+		if err := CheckDNS(context.Background(), aghDNSPort); err != nil {
 			return fmt.Errorf("AGH DNS port check failed (%s): %w", aghDNSPort, err)
 		}
 	}
@@ -116,8 +117,8 @@ func (c *Checker) resolveEndpoints() (webURL, dnsPort string, err error) {
 }
 
 // CheckDNS sends a raw DNS query (Type A for root) to verify the resolver is functionally answering.
-func CheckDNS(address string) error {
-	conn, err := dnsDialer.DialContext(context.Background(), "udp", address)
+func CheckDNS(ctx context.Context, address string) error {
+	conn, err := dnsDialer.DialContext(ctx, "udp", address)
 	if err != nil {
 		return fmt.Errorf("dialing %s failed: %w", address, err)
 	}
@@ -133,6 +134,11 @@ func CheckDNS(address string) error {
 	// RFC 9476 standardized QNAME 'dns.healthcheck.arpa' (Type A, Class IN).
 	// Resolvers automatically exclude this domain from query logs to maintain clean statistics.
 	query := []byte("\xAA\xAA\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03dns\x0bhealthcheck\x04arpa\x00\x00\x01\x00\x01")
+
+	// Randomize TxID to prevent spoofed responses on shared or compromised networks.
+	var txID [2]byte
+	rand.Read(txID[:]) // #nosec G104 -- crypto/rand uses OS CSPRNG, errors are unrecoverable
+	query[0], query[1] = txID[0], txID[1]
 
 	if _, err = conn.Write(query); err != nil {
 		return fmt.Errorf("failed to send DNS query: %w", err)
@@ -151,7 +157,7 @@ func CheckDNS(address string) error {
 		return fmt.Errorf("DNS response too short: %d bytes", n)
 	}
 
-	if buf[0] != 0xAA || buf[1] != 0xAA {
+	if buf[0] != txID[0] || buf[1] != txID[1] {
 		return fmt.Errorf("DNS response transaction ID mismatch: got %02x %02x", buf[0], buf[1])
 	}
 

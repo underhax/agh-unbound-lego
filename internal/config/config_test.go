@@ -12,7 +12,6 @@ func TestLoadConfig_Success(t *testing.T) {
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("QUIC_GO_DISABLE_ECN", "true")
 
-	// Mock Docker secrets directory
 	secretsDir := t.TempDir()
 
 	err := os.WriteFile(filepath.Join(secretsDir, "acme_email"), []byte("admin@example.tld\n"), 0o600)
@@ -72,7 +71,9 @@ func TestLoadConfig_InvalidData(t *testing.T) {
 }
 
 func TestLoadConfig_MissingEnv(t *testing.T) {
-	os.Clearenv() // Ensure ACME_DOMAIN is empty
+	t.Setenv("ACME_DOMAIN", "")
+	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("QUIC_GO_DISABLE_ECN", "")
 	t.Setenv("LEGO_ENABLE", "true")
 
 	_, err := Load(t.TempDir())
@@ -82,7 +83,10 @@ func TestLoadConfig_MissingEnv(t *testing.T) {
 }
 
 func TestLoadConfig_LegoDisabled(t *testing.T) {
-	os.Clearenv() // Ensure LEGO_ENABLE and ACME_DOMAIN are empty
+	t.Setenv("ACME_DOMAIN", "")
+	t.Setenv("LEGO_ENABLE", "")
+	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("QUIC_GO_DISABLE_ECN", "")
 
 	cfg, err := Load(t.TempDir())
 	if err != nil {
