@@ -36,3 +36,32 @@ func TestManager_Lifecycle(t *testing.T) {
 		// Success
 	}
 }
+
+func TestManager_RestartSuppressesCrashError(t *testing.T) {
+	t.Parallel()
+
+	m := NewManager(t.Context())
+
+	err := m.Start("sleeper", "sleep", "10")
+	if err != nil {
+		t.Fatalf("Expected no error on start, got: %v", err)
+	}
+
+	// Validates that intentional SIGTERM via Restart bypasses crash telemetry.
+	err = m.Restart("sleeper", "sleep", "10")
+	if err != nil {
+		t.Fatalf("Expected graceful restart to succeed, got: %v", err)
+	}
+
+	// Delay accommodates concurrent monitor processing of the dispatched SIGTERM.
+	timer := time.NewTimer(500 * time.Millisecond)
+	defer timer.Stop()
+
+	select {
+	case err := <-m.Errors():
+		t.Fatalf("BUG REGRESSION: Process Manager recorded a fatal crash during a graceful restart: %v", err)
+	case <-timer.C:
+	}
+
+	m.StopAll(2 * time.Second)
+}
