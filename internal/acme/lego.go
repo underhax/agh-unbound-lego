@@ -155,8 +155,8 @@ func executeAndLog(ctx context.Context, cmd *exec.Cmd, processName string) error
 		util.StreamToLog(ctx, processName, "stderr", stderr, slog.LevelWarn, nil)
 	}()
 
-	err = cmd.Wait()
 	wg.Wait()
+	err = cmd.Wait()
 
 	if err != nil {
 		return fmt.Errorf("process execution failed: %w", err)
