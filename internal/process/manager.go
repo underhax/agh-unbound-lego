@@ -67,9 +67,18 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 		return fmt.Errorf("failed to start %s: %w", name, err)
 	}
 
+	var logWg sync.WaitGroup
+	logWg.Add(2)
+
 	// Consume stdout/stderr in separate goroutines to prevent pipe buffer saturation (blocking).
-	go pipeLogger(m.ctx, name, "stdout", stdout)
-	go pipeLogger(m.ctx, name, "stderr", stderr)
+	go func() {
+		defer logWg.Done()
+		pipeLogger(m.ctx, name, "stdout", stdout)
+	}()
+	go func() {
+		defer logWg.Done()
+		pipeLogger(m.ctx, name, "stderr", stderr)
+	}()
 
 	m.cmds[name] = cmd
 
@@ -81,15 +90,17 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 	m.wg.Add(1)
 	slog.Info("Process started", "name", name, "pid", cmd.Process.Pid)
 
-	go m.monitor(name, cmd)
+	go m.monitor(name, cmd, &logWg)
 
 	return nil
 }
 
 // monitor waits for process exit and distinguishes between intentional and accidental termination.
-func (m *Manager) monitor(name string, cmd *exec.Cmd) {
+// logWg ensures that process logs are fully flushed before the underlying OS pipes are forcibly closed.
+func (m *Manager) monitor(name string, cmd *exec.Cmd, logWg *sync.WaitGroup) {
 	defer m.wg.Done()
 
+	logWg.Wait()
 	err := cmd.Wait()
 
 	m.mu.Lock()
