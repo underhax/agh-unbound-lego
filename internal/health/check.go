@@ -23,6 +23,9 @@ const checkTimeout = 2 * time.Second
 var dnsDialer = &net.Dialer{Timeout: checkTimeout}
 var httpClient = &http.Client{
 	Timeout: checkTimeout,
+	Transport: &http.Transport{
+		DisableKeepAlives: true,
+	},
 	// AGH admin panel should not redirect on the health probe path.
 	// Following redirects risks consuming the timeout budget on TLS or auth endpoints.
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
