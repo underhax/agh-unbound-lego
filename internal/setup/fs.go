@@ -70,14 +70,25 @@ func normalizeUnboundConfig() error {
 		result = append(result, line)
 	}
 
-	// Atomic write: temp file + rename prevents data loss on crash between truncate and write.
-	// O_EXCL prevents symlink hijacking if a malicious actor pre-creates the temp path.
-	tmpPath := UnboundConfFile + ".tmp"
-	// #nosec G304 -- tmpPath is a constant, safe from path traversal.
-	tmpFile, err := os.OpenFile(tmpPath, os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
+	// Cleanup any orphan temp files from previous hard crashes to prevent disk pollution.
+	//nolint:errcheck // pattern is a hardcoded constant, glob will not return a syntax error
+	oldTmps, _ := filepath.Glob(filepath.Join(filepath.Dir(UnboundConfFile), "unbound.conf.*.tmp"))
+	for _, f := range oldTmps {
+		//nolint:errcheck // cleanup is best-effort prior to new file creation
+		_ = os.Remove(f)
+	}
+
+	// os.CreateTemp uses O_EXCL and randomizes the suffix to prevent symlink hijacking
+	// and eliminates CrashLoopBackOff DoS vulnerabilities caused by orphaned temp files.
+	tmpFile, err := os.CreateTemp(filepath.Dir(UnboundConfFile), "unbound.conf.*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp unbound config: %w", err)
 	}
+
+	tmpPath := tmpFile.Name()
+	//nolint:errcheck // deferred cleanup acts as a panic fallback; expected to silently fail if Rename succeeds
+	defer os.Remove(tmpPath)
+
 	if _, err := tmpFile.WriteString(strings.Join(result, "\n")); err != nil {
 		cerr := tmpFile.Close()
 		if cerr != nil {
