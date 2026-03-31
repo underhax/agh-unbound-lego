@@ -210,7 +210,20 @@ func (m *Manager) StopAll(timeout time.Duration) {
 		}
 	}
 
-	m.wg.Wait()
+	// Bounds maximum I/O drain latency to prevent supervisor Deadlocks
+	// from daemonized child processes inheriting STDOUT descriptors.
+	done := make(chan struct{})
+	go func() {
+		m.wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		slog.Debug("All process monitors terminated cleanly")
+	case <-time.After(timeout):
+		slog.Warn("StopAll timed out waiting for log buffers to flush (possible inherited descriptor leak)")
+	}
 }
 
 // Errors provides a channel for critical failure notifications.
