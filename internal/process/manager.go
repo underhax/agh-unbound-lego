@@ -17,6 +17,7 @@ import (
 type Manager struct {
 	ctx        context.Context
 	cmds       map[string]*exec.Cmd
+	restarting map[string]bool // Suppresses crash alerts during controlled service reloads.
 	errChan    chan error
 	order      []string // Tracks insertion order for reverse LIFO shutdown.
 	mu         sync.Mutex
@@ -27,9 +28,10 @@ type Manager struct {
 // NewManager creates a process table to track child lifecycles and route crash signals.
 func NewManager(ctx context.Context) *Manager {
 	return &Manager{
-		ctx:     ctx,
-		cmds:    make(map[string]*exec.Cmd),
-		errChan: make(chan error, 2),
+		ctx:        ctx,
+		cmds:       make(map[string]*exec.Cmd),
+		restarting: make(map[string]bool),
+		errChan:    make(chan error, 2),
 	}
 }
 
@@ -92,11 +94,17 @@ func (m *Manager) monitor(name string, cmd *exec.Cmd) {
 
 	m.mu.Lock()
 	stopping := m.isStopping
+	isRestarting := m.restarting[name]
+	delete(m.restarting, name)
 	delete(m.cmds, name)
 	m.mu.Unlock()
 
 	if stopping {
-		slog.Debug("Process terminated intentionally", "name", name)
+		slog.Debug("Process terminated intentionally for shutdown", "name", name)
+		return
+	}
+	if isRestarting {
+		slog.Debug("Process terminated intentionally for restart", "name", name)
 		return
 	}
 
@@ -114,6 +122,9 @@ func (m *Manager) monitor(name string, cmd *exec.Cmd) {
 func (m *Manager) Restart(name, bin string, args ...string) error {
 	m.mu.Lock()
 	_, exists := m.cmds[name]
+	if exists {
+		m.restarting[name] = true
+	}
 	m.mu.Unlock()
 
 	if !exists {
@@ -122,6 +133,9 @@ func (m *Manager) Restart(name, bin string, args ...string) error {
 
 	slog.Info("Restarting process", "name", name)
 	if err := m.stopOne(name, 5*time.Second); err != nil {
+		m.mu.Lock()
+		delete(m.restarting, name)
+		m.mu.Unlock()
 		return fmt.Errorf("failed to terminate process %s before restart: %w", name, err)
 	}
 	return m.Start(name, bin, args...)
