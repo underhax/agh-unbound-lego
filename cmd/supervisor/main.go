@@ -13,12 +13,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/webstudiobond/agh-unbound-lego/internal/acme"
-	"github.com/webstudiobond/agh-unbound-lego/internal/config"
-	"github.com/webstudiobond/agh-unbound-lego/internal/health"
-	"github.com/webstudiobond/agh-unbound-lego/internal/process"
-	"github.com/webstudiobond/agh-unbound-lego/internal/setup"
-	"github.com/webstudiobond/agh-unbound-lego/internal/util"
+	"github.com/underhax/agh-unbound-lego/internal/acme"
+	"github.com/underhax/agh-unbound-lego/internal/config"
+	"github.com/underhax/agh-unbound-lego/internal/health"
+	"github.com/underhax/agh-unbound-lego/internal/process"
+	"github.com/underhax/agh-unbound-lego/internal/setup"
+	"github.com/underhax/agh-unbound-lego/internal/util"
 )
 
 func setLogger(level slog.Level) {

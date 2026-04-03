@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/webstudiobond/agh-unbound-lego/internal/util"
+	"github.com/underhax/agh-unbound-lego/internal/util"
 )
 
 // Manager handles the lifecycle, monitoring, and structured logging of child processes.

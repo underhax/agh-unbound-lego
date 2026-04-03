@@ -1,4 +1,4 @@
-module github.com/webstudiobond/agh-unbound-lego
+module github.com/underhax/agh-unbound-lego
 
 go 1.26.1
 

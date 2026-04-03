@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/webstudiobond/agh-unbound-lego/internal/util"
+	"github.com/underhax/agh-unbound-lego/internal/util"
 )
 
 // pipeLogger consumes lines from an io.ReadCloser and emits them as structured slog entries.

@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/webstudiobond/agh-unbound-lego/internal/config"
-	"github.com/webstudiobond/agh-unbound-lego/internal/setup"
-	"github.com/webstudiobond/agh-unbound-lego/internal/util"
+	"github.com/underhax/agh-unbound-lego/internal/config"
+	"github.com/underhax/agh-unbound-lego/internal/setup"
+	"github.com/underhax/agh-unbound-lego/internal/util"
 )
 
 // Manager handles ACME certificate issuance and renewal via the lego CLI.

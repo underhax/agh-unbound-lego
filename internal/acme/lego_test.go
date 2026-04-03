@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/webstudiobond/agh-unbound-lego/internal/config"
+	"github.com/underhax/agh-unbound-lego/internal/config"
 )
 
 func TestBuildCmd_WildcardAndEnv(t *testing.T) {

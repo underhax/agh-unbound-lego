@@ -4,7 +4,7 @@ services:
   agh:
     container_name: agh
     hostname: agh
-    image: ghcr.io/webstudiobond/agh-unbound-lego:latest
+    image: ghcr.io/underhax/agh-unbound-lego:latest
     pull_policy: always
     restart: unless-stopped
 

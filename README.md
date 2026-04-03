@@ -2,10 +2,10 @@
 
 This project provides a highly secure, all-in-one DNS resolution stack combining [**AdGuard Home**](https://github.com/AdguardTeam/AdGuardHome) (ad blocking and filtering), [**Unbound**](https://github.com/NLnetLabs/unbound) (recursive, validating, and caching DNS resolver), and [**Lego**](https://github.com/go-acme/lego) (ACME client for automated Let's Encrypt TLS certificates).
 
-[![CI](https://github.com/webstudiobond/agh-unbound-lego/actions/workflows/ci.yml/badge.svg)](https://github.com/webstudiobond/agh-unbound-lego/actions/workflows/ci.yml)
-[![GitHub last commit](https://img.shields.io/github/last-commit/webstudiobond/agh-unbound-lego)](https://github.com/webstudiobond/agh-unbound-lego/commits/main)
-[![GitHub issues](https://img.shields.io/github/issues/webstudiobond/agh-unbound-lego)](https://github.com/webstudiobond/agh-unbound-lego/issues)
-[![GitHub repo size](https://img.shields.io/github/repo-size/webstudiobond/agh-unbound-lego)](https://github.com/webstudiobond/agh-unbound-lego)
+[![CI](https://github.com/underhax/agh-unbound-lego/actions/workflows/ci.yml/badge.svg)](https://github.com/underhax/agh-unbound-lego/actions/workflows/ci.yml)
+[![GitHub last commit](https://img.shields.io/github/last-commit/underhax/agh-unbound-lego)](https://github.com/underhax/agh-unbound-lego/commits/main)
+[![GitHub issues](https://img.shields.io/github/issues/underhax/agh-unbound-lego)](https://github.com/underhax/agh-unbound-lego/issues)
+[![GitHub repo size](https://img.shields.io/github/repo-size/underhax/agh-unbound-lego)](https://github.com/underhax/agh-unbound-lego)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## About this Container
@@ -136,10 +136,10 @@ chown -R 2000:2000 /home/dns/secrets
 ```
 
 ### 7. Docker Compose Setup
-Download the [Docker Compose file](https://raw.githubusercontent.com/webstudiobond/agh-unbound-lego/main/docker-compose.yaml):
+Download the [Docker Compose file](https://raw.githubusercontent.com/underhax/agh-unbound-lego/main/docker-compose.yaml):
 
 ```bash
-curl --proto '=https' -sSLf -o /home/dns/docker-compose.yaml https://raw.githubusercontent.com/webstudiobond/agh-unbound-lego/main/docker-compose.yaml
+curl --proto '=https' -sSLf -o /home/dns/docker-compose.yaml https://raw.githubusercontent.com/underhax/agh-unbound-lego/main/docker-compose.yaml
 ```
 
 Edit the downloaded `docker-compose.yaml` to enable Lego, uncomment both the service-level and top-level secrets blocks, and configure your actual domain for certificate generation:
@@ -195,11 +195,11 @@ Refer to the [AdGuard Home Wiki](https://github.com/AdguardTeam/AdGuardHome/wiki
 Download the custom Nginx templates for AdGuard Home:
 
 ```bash
-curl --proto '=https' -sSLf -o /usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.stpl https://raw.githubusercontent.com/webstudiobond/agh-unbound-lego/main/usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.stpl
+curl --proto '=https' -sSLf -o /usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.stpl https://raw.githubusercontent.com/underhax/agh-unbound-lego/main/usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.stpl
 ```
 
 ```bash
-curl --proto '=https' -sSLf -o /usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl https://raw.githubusercontent.com/webstudiobond/agh-unbound-lego/main/usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl
+curl --proto '=https' -sSLf -o /usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl https://raw.githubusercontent.com/underhax/agh-unbound-lego/main/usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl
 ```
 
 #### Restrict Admin Panel Access (Optional)
@@ -237,7 +237,7 @@ To compile the Docker image yourself from the source repository:
 ```bash
 cd /home/dns/
 
-git clone https://github.com/webstudiobond/agh-unbound-lego.git
+git clone https://github.com/underhax/agh-unbound-lego.git
 
 cd /home/dns/agh-unbound-lego
 
