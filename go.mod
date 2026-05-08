@@ -1,6 +1,6 @@
 module github.com/underhax/agh-unbound-lego
 
-go 1.26.2
+go 1.26.3
 
 require (
 	golang.org/x/net v0.53.0

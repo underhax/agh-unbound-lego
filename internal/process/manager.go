@@ -203,8 +203,7 @@ func (m *Manager) StopAll(timeout time.Duration) {
 	m.mu.Unlock()
 
 	// Shutdown in reverse order: AGH must stop before its upstream resolver (unbound).
-	for i := len(shutdownOrder) - 1; i >= 0; i-- {
-		name := shutdownOrder[i]
+	for _, name := range slices.Backward(shutdownOrder) {
 		if err := m.stopOne(name, timeout); err != nil {
 			slog.Error("Failed to stop process cleanly", "name", name, "error", err)
 		}
