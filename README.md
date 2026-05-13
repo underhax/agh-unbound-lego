@@ -83,7 +83,7 @@ docker run --rm -it \
   -u root \
   -v $(pwd)/data/agh/work:/opt/adguardhome/work/data \
   -v $(pwd)/data/agh/conf:/opt/adguardhome/conf \
-  -p 3000:3000/tcp \
+  -p 127.0.0.1:3000:3000/tcp \
   -p 127.0.0.1:6553:53/udp \
   -e LEGO_ENABLE=false \
   -e LOG_LEVEL=debug \
