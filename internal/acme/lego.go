@@ -64,6 +64,7 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 		"--domains", m.cfg.ACMEDomain,
 		"--domains", "*." + m.cfg.ACMEDomain,
 		"--no-random-sleep",
+		"--dns.resolvers", "1.1.1.1:53",
 	}
 
 	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
