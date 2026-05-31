@@ -56,13 +56,13 @@ func (m *Manager) getCertModTime() time.Time {
 // buildCmd constructs the exec.Cmd for lego with required arguments and secure ENV injection.
 func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 	args := []string{
+		action,
 		"--accept-tos",
 		"--path", setup.DirLego,
 		"--email", string(m.cfg.ACMEEmail),
 		"--dns", "cloudflare",
 		"--domains", m.cfg.ACMEDomain,
 		"--domains", "*." + m.cfg.ACMEDomain,
-		action,
 	}
 
 	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
@@ -73,21 +73,17 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 	return cmd
 }
 
-// EnsureCert verifies certificate existence on startup and obtains one if missing.
+// EnsureCert verifies certificate existence on startup and obtains or renews it if necessary.
 func (m *Manager) EnsureCert(ctx context.Context) error {
-	if m.certExists() {
-		slog.Info("TLS certificate already exists", "domain", m.cfg.ACMEDomain)
-		return nil
-	}
+	slog.Info("Ensuring valid TLS certificate", "domain", m.cfg.ACMEDomain)
 
-	slog.Info("Obtaining initial TLS certificate", "domain", m.cfg.ACMEDomain)
 	cmd := m.buildCmd(ctx, "run")
 
 	if err := executeAndLog(ctx, cmd, "lego-run"); err != nil {
 		return fmt.Errorf("lego run failed: %w", err)
 	}
 
-	slog.Info("Successfully obtained initial TLS certificate")
+	slog.Info("TLS certificate is ready")
 	return nil
 }
 
@@ -106,7 +102,7 @@ func (m *Manager) StartRenewTicker(ctx context.Context) {
 			case <-ticker.C:
 				slog.Debug("Executing scheduled TLS certificate renewal check")
 				beforeMtime := m.getCertModTime()
-				cmd := m.buildCmd(ctx, "renew")
+				cmd := m.buildCmd(ctx, "run")
 
 				if err := executeAndLog(ctx, cmd, "lego-renew"); err != nil {
 					slog.Error("Lego renewal check encountered an error", "error", err)
