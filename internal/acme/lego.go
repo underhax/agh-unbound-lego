@@ -79,11 +79,11 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 func (m *Manager) EnsureCert(ctx context.Context) error {
 	slog.Info("Ensuring valid TLS certificate", "domain", m.cfg.ACMEDomain)
 
-	migrateCmd := exec.CommandContext(ctx, "lego", "--path", "/opt/lego", "migrate")
-	if err := migrateCmd.Run(); err != nil {
-		slog.Debug("Lego migration skipped or not required", "error", err)
+	migrateCmd := exec.CommandContext(ctx, "lego", "migrate", "--path", "/opt/lego")
+	if out, err := migrateCmd.CombinedOutput(); err != nil {
+		slog.Debug("Lego migration skipped or failed", "error", err, "output", string(out))
 	} else {
-		slog.Info("Successfully migrated lego storage to v5 format")
+		slog.Info("Successfully migrated lego storage to v5 format", "output", string(out))
 	}
 
 	cmd := m.buildCmd(ctx, "run")
