@@ -63,6 +63,7 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 		"--dns", "cloudflare",
 		"--domains", m.cfg.ACMEDomain,
 		"--domains", "*." + m.cfg.ACMEDomain,
+		"--no-random-sleep",
 	}
 
 	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
