@@ -76,16 +76,27 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 	return cmd
 }
 
+func (m *Manager) needsMigration() bool {
+	pattern := filepath.Join(setup.DirLego, "accounts", "*", "*", "keys")
+	matches, err := filepath.Glob(pattern)
+	return err == nil && len(matches) > 0
+}
+
 // EnsureCert verifies certificate existence on startup and obtains or renews it if necessary.
 func (m *Manager) EnsureCert(ctx context.Context) error {
 	slog.Info("Ensuring valid TLS certificate", "domain", m.cfg.ACMEDomain)
 
-	migrateCmd := exec.CommandContext(ctx, "lego", "migrate", "--path", "/opt/lego")
-	migrateCmd.Stdin = strings.NewReader("Y\n")
-	if out, err := migrateCmd.CombinedOutput(); err != nil {
-		slog.Debug("Lego migration skipped or failed", "error", err, "output", string(out))
+	if m.needsMigration() {
+		slog.Info("Detected v4 lego storage format, starting migration...")
+		migrateCmd := exec.CommandContext(ctx, "lego", "migrate", "--path", "/opt/lego")
+		migrateCmd.Stdin = strings.NewReader("Y\n")
+		if out, err := migrateCmd.CombinedOutput(); err != nil {
+			slog.Debug("Lego migration skipped or failed", "error", err, "output", string(out))
+		} else {
+			slog.Info("Successfully migrated lego storage to v5 format", "output", string(out))
+		}
 	} else {
-		slog.Info("Successfully migrated lego storage to v5 format", "output", string(out))
+		slog.Debug("Lego storage is already v5 or fresh install, skipping migration")
 	}
 
 	cmd := m.buildCmd(ctx, "run")

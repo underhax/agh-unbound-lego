@@ -121,7 +121,11 @@ func readSecret(dir, filename string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to open secret '%s': %w", filename, err)
 	}
-	defer f.Close() //nolint:errcheck // Read-only file; close errors are not actionable.
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil {
+			slog.Debug("failed to close secret file", "error", closeErr)
+		}
+	}()
 
 	limited := io.LimitReader(f, maxSecretSize+1)
 	data, err := io.ReadAll(limited)

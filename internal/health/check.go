@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -125,8 +126,11 @@ func CheckDNS(ctx context.Context, address string) error {
 	if err != nil {
 		return fmt.Errorf("dialing %s failed: %w", address, err)
 	}
-	//nolint:errcheck // Socket is closed purely to release resources; cleanup errors are not actionable.
-	defer conn.Close()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			slog.Debug("failed to close UDP connection", "error", closeErr)
+		}
+	}()
 
 	// SetDeadline covers both Write and Read, bounding the entire exchange to 2 seconds.
 	// SetReadDeadline alone would leave Write unprotected if the kernel UDP send buffer saturates.
@@ -140,7 +144,9 @@ func CheckDNS(ctx context.Context, address string) error {
 
 	// Randomize TxID to prevent spoofed responses on shared or compromised networks.
 	var txID [2]byte
-	rand.Read(txID[:]) // #nosec G104 -- crypto/rand uses OS CSPRNG, errors are unrecoverable
+	if _, err = rand.Read(txID[:]); err != nil {
+		return fmt.Errorf("crypto/rand failed: %w", err)
+	}
 	query[0], query[1] = txID[0], txID[1]
 
 	if _, err = conn.Write(query); err != nil {

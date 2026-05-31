@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,7 +58,7 @@ func normalizeUnboundConfig() error {
 	}
 
 	var result []string
-	for _, line := range strings.Split(string(data), "\n") { //nolint:modernize // strings.SplitSeq requires Go 1.24+
+	for line := range strings.SplitSeq(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
 
 		// Port and interface must be 5053 and 127.0.0.1 for the supervisor healthcheck to work.
@@ -71,11 +72,14 @@ func normalizeUnboundConfig() error {
 	}
 
 	// Cleanup any orphan temp files from previous hard crashes to prevent disk pollution.
-	//nolint:errcheck // pattern is a hardcoded constant, glob will not return a syntax error
-	oldTmps, _ := filepath.Glob(filepath.Join(filepath.Dir(UnboundConfFile), "unbound.conf.*.tmp"))
+	oldTmps, err := filepath.Glob(filepath.Join(filepath.Dir(UnboundConfFile), "unbound.conf.*.tmp"))
+	if err != nil {
+		slog.Debug("failed to glob old temp config files", "error", err)
+	}
 	for _, f := range oldTmps {
-		//nolint:errcheck // cleanup is best-effort prior to new file creation
-		_ = os.Remove(f)
+		if removeErr := os.Remove(f); removeErr != nil {
+			slog.Debug("failed to remove old temp config file", "file", f, "error", removeErr)
+		}
 	}
 
 	// os.CreateTemp uses O_EXCL and randomizes the suffix to prevent symlink hijacking
@@ -86,8 +90,11 @@ func normalizeUnboundConfig() error {
 	}
 
 	tmpPath := tmpFile.Name()
-	//nolint:errcheck // deferred cleanup acts as a panic fallback; expected to silently fail if Rename succeeds
-	defer os.Remove(tmpPath)
+	defer func() {
+		if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+			slog.Debug("failed to cleanup temp unbound config", "error", err)
+		}
+	}()
 
 	if _, err := tmpFile.WriteString(strings.Join(result, "\n")); err != nil {
 		cerr := tmpFile.Close()
@@ -121,8 +128,9 @@ func TrustAnchor() error {
 
 	// unbound-anchor returns non-zero on first-run bootstrap even on success, so the exit
 	// code is not a reliable signal. File presence and size are checked immediately after.
-	// #nosec G204 -- keyPath is derived from internal constants, immune to command injection.
-	_ = exec.CommandContext(ctx, "unbound-anchor", "-a", keyPath).Run() //nolint:errcheck // exit code is unreliable; post-run file validation below is the actual check.
+	if err := exec.CommandContext(ctx, "unbound-anchor", "-a", "/opt/unbound/root.key").Run(); err != nil {
+		slog.Debug("unbound-anchor bootstrap completed with non-zero exit code (expected behavior)", "error", err)
+	}
 
 	// Validate that the anchor file was actually created and is not empty.
 	// If the network is down during first boot, unbound-anchor fails silently.

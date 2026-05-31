@@ -26,12 +26,16 @@ func startMockDNS(t *testing.T) (addr string, cleanup func()) {
 			if n >= 3 {
 				buf[2] |= 0x80
 			}
-			//nolint:errcheck,gosec // Mock server response is best-effort.
-			ln.WriteToUDP(buf[:n], addr)
+			if _, err := ln.WriteToUDP(buf[:n], addr); err != nil {
+				t.Logf("Mock DNS failed to write response: %v", err)
+			}
 		}
 	}()
-	//nolint:errcheck,gosec // Test teardown cleanup is best-effort.
-	return ln.LocalAddr().String(), func() { ln.Close() }
+	return ln.LocalAddr().String(), func() {
+		if err := ln.Close(); err != nil {
+			t.Logf("Failed to close mock DNS listener: %v", err)
+		}
+	}
 }
 
 func TestChecker_Run(t *testing.T) {

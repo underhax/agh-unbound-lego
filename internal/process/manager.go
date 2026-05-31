@@ -163,7 +163,9 @@ func (m *Manager) stopOne(name string, timeout time.Duration) error {
 		return nil
 	}
 	slog.Info("Stopping process", "name", name, "pid", cmd.Process.Pid)
-	_ = cmd.Process.Signal(syscall.SIGTERM) //nolint:errcheck // Signal delivery is best-effort.
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		slog.Debug("failed to send SIGTERM to process (already exited or permission denied)", "name", name, "pid", cmd.Process.Pid, "error", err)
+	}
 	m.mu.Unlock()
 
 	exited := func() bool {
@@ -182,7 +184,9 @@ func (m *Manager) stopOne(name string, timeout time.Duration) error {
 	slog.Warn("Process failed to stop gracefully, forcing SIGKILL", "name", name)
 	m.mu.Lock()
 	if cmd, exists := m.cmds[name]; exists {
-		_ = cmd.Process.Kill() //nolint:errcheck // Kill delivery is best-effort.
+		if err := cmd.Process.Kill(); err != nil {
+			slog.Debug("failed to send SIGKILL to process", "name", name, "pid", cmd.Process.Pid, "error", err)
+		}
 	}
 	m.mu.Unlock()
 
