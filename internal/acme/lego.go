@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -80,6 +81,7 @@ func (m *Manager) EnsureCert(ctx context.Context) error {
 	slog.Info("Ensuring valid TLS certificate", "domain", m.cfg.ACMEDomain)
 
 	migrateCmd := exec.CommandContext(ctx, "lego", "migrate", "--path", "/opt/lego")
+	migrateCmd.Stdin = strings.NewReader("Y\n")
 	if out, err := migrateCmd.CombinedOutput(); err != nil {
 		slog.Debug("Lego migration skipped or failed", "error", err, "output", string(out))
 	} else {
