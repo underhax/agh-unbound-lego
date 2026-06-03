@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM adguard/adguardhome:v0.107.76@sha256:7157eb1dc3b26c7af1d6898759a7b3f7d0fa09891fbd2d3caa6abc1057a9179b AS agh
+FROM adguard/adguardhome:v0.107.77@sha256:e6f2b8bcda06064ab055b44933a4f0e983c35558b9cdb8d2e7ab1efcee36d890 AS agh
 FROM goacme/lego:v5.2.0@sha256:b1542a718695c3beafefaad26d6856e61eaeff7906cb9b45f1fd09db8ee17807 AS lego
 FROM golang:1.26.4-alpine3.23@sha256:f23e8b227fb4493eabe03bede4d5a32d04092da71962f1fb79b5f7d1e6c2a17f AS builder
 
