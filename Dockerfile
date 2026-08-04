@@ -12,7 +12,6 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 
-# Compile static Go supervisor
 RUN ARCH="${TARGETARCH:-$(uname -m)}" \
     && case "${ARCH}" in x86_64) ARCH="amd64" ;; aarch64) ARCH="arm64" ;; esac \
     && CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -ldflags="-s -w" -o /build/supervisor cmd/supervisor/main.go
@@ -23,16 +22,13 @@ SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
 WORKDIR /opt
 
-# Extract pre-compiled binaries from official images (Supply Chain Security validation handled by Dependabot)
 COPY --from=agh /opt/adguardhome/AdGuardHome /opt/adguardhome/AdGuardHome
 COPY --from=lego /lego /usr/local/bin/lego
 COPY --from=builder /build/supervisor /usr/local/bin/supervisor
 
-# Validate copied binaries exist and are executable
 RUN /opt/adguardhome/AdGuardHome --version \
     && /usr/local/bin/lego --version
 
-# Single unprivileged user manages the supervisor and child processes.
 # hadolint ignore=DL3018
 RUN apk add --no-cache ca-certificates unbound \
     && addgroup -S -g 2000 appgroup \
@@ -42,7 +38,7 @@ RUN apk add --no-cache ca-certificates unbound \
 
 COPY --chown=appuser:appgroup build/unbound.conf.default /etc/unbound/unbound.conf.default
 
-USER appuser
+USER 2000
 
 VOLUME ["/opt/adguardhome/conf", "/opt/adguardhome/work", "/opt/unbound", "/opt/lego"]
 
