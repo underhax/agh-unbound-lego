@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 FROM adguard/adguardhome:v0.107.79@sha256:aba9e3bf0613be3ba3755e1fc311b126e2c24bec25e18b6483894a88283074f0 AS agh
-FROM goacme/lego:v5.3.1@sha256:f4fd80df0ef94d2f536cc2e7fb5bdbd090fb0aa81b3595226b9fe814bb9a2bfe AS lego
-FROM golang:1.26.6-alpine3.24@sha256:3889b425f035be855a72fb4755265311293b6d414521f0a519d819df32222d83 AS builder
+FROM goacme/lego:v5.4.0@sha256:7cddf252ccf0ec00b71cbd4dcd548fdbc780006b05ae630e5fa4a981353c5728 AS lego
+FROM golang:1.27.0-alpine3.24@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS builder
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
