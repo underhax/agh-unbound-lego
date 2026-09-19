@@ -1,6 +1,5 @@
-# syntax=docker/dockerfile:1
 FROM adguard/adguardhome:v0.107.79@sha256:aba9e3bf0613be3ba3755e1fc311b126e2c24bec25e18b6483894a88283074f0 AS agh
-FROM goacme/lego:v5.4.1@sha256:ac04a7aaac0270ca2c32f1e79b157087d763e78c4473551c6e093070614536e2 AS lego
+FROM goacme/lego:v5.5.1@sha256:9c446e8ce05155f87475ce87392a5c55472a7ecd06e244752f762d2f4b162e8d AS lego
 FROM golang:1.27.1-alpine3.24@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
@@ -16,7 +15,7 @@ RUN ARCH="${TARGETARCH:-$(uname -m)}" \
     && case "${ARCH}" in x86_64) ARCH="amd64" ;; aarch64) ARCH="arm64" ;; esac \
     && CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -ldflags="-s -w" -o /build/supervisor cmd/supervisor/main.go
 
-FROM alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM alpine:3.24.2@sha256:31b6477333eb8257db9e5d7c3a7264fd0467928756f0bbcc27d35bea5d28cdbd
 
 SHELL ["/bin/ash", "-eo", "pipefail", "-c"]
 
