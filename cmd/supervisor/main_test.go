@@ -103,7 +103,7 @@ func TestPerformHealthcheck(t *testing.T) {
 			func(_ context.Context, _ string) (net.Conn, error) {
 				return &mockDNSConn{response: validDNSHeader()}, nil
 			},
-			func(_ *http.Request) (*http.Response, error) {
+			func(_ context.Context, _ int) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader("OK")),

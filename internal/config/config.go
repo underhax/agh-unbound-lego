@@ -164,7 +164,6 @@ func validateDomainLabel(label string) error {
 	return nil
 }
 
-// validateDomain strictly validates a domain per RFC 1123 / RFC 952.
 func validateDomain(domain string) error {
 	if domain == "" {
 		return errors.New("acme_domain is required when LEGO_ENABLE is true")
@@ -186,7 +185,6 @@ func validateDomain(domain string) error {
 	return nil
 }
 
-// validateEmail ensures the email has a valid structure and a compliant IDNA domain.
 func validateEmail(email string) error {
 	parts := strings.Split(email, "@")
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {

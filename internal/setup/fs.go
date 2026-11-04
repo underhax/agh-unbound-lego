@@ -26,8 +26,9 @@ var (
 )
 
 func defaultCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
-	// #nosec G204 - Command and arguments are internally controlled.
-	return exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name)
+	cmd.Args = append(cmd.Args, args...)
+	return cmd
 }
 
 func defaultSyncFile(f *os.File) error {
@@ -52,11 +53,36 @@ func defaultWriteString(f *os.File, s string) (int, error) {
 	return n, nil
 }
 
+func defaultCreateTemp(dir, pattern string) (*os.File, error) {
+	f, err := os.CreateTemp(dir, pattern)
+	if err != nil {
+		return nil, fmt.Errorf("create temp failed: %w", err)
+	}
+	return f, nil
+}
+
+func defaultRename(oldpath, newpath string) error {
+	if err := os.Rename(oldpath, newpath); err != nil {
+		return fmt.Errorf("rename failed: %w", err)
+	}
+	return nil
+}
+
+func defaultRemove(name string) error {
+	if err := os.Remove(name); err != nil {
+		return fmt.Errorf("remove failed: %w", err)
+	}
+	return nil
+}
+
 var (
 	execCommand = defaultCommandContext
 	syncFile    = defaultSyncFile
 	closeFile   = defaultCloseFile
 	writeString = defaultWriteString
+	createTemp  = defaultCreateTemp
+	renameFile  = defaultRename
+	removeFile  = defaultRemove
 )
 
 func defaultRunAnchor(ctx context.Context) error {
@@ -129,14 +155,14 @@ func normalizeUnboundConfig() error {
 	content := normalizeConfigLines(data)
 	cleanupOldTempConfigs()
 
-	tmpFile, err := os.CreateTemp(filepath.Dir(UnboundConfFile), "unbound.conf.*.tmp")
+	tmpFile, err := createTemp(filepath.Dir(UnboundConfFile), "unbound.conf.*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp unbound config: %w", err)
 	}
 
 	tmpPath := tmpFile.Name()
 	defer func() {
-		if err := os.Remove(tmpPath); err != nil && !os.IsNotExist(err) {
+		if err := removeFile(tmpPath); err != nil && !os.IsNotExist(err) {
 			slog.Debug("failed to cleanup temp unbound config", "error", err)
 		}
 	}()
@@ -151,7 +177,7 @@ func normalizeUnboundConfig() error {
 		return fmt.Errorf("failed to close temp unbound config: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, UnboundConfFile); err != nil {
+	if err := renameFile(tmpPath, UnboundConfFile); err != nil {
 		return fmt.Errorf("failed to rename unbound config: %w", err)
 	}
 

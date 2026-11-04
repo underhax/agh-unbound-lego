@@ -19,8 +19,9 @@ var (
 )
 
 func defaultCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
-	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
-	return exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, name)
+	cmd.Args = append(cmd.Args, args...)
+	return cmd
 }
 
 var execCommand = defaultCommandContext
@@ -101,7 +102,6 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 	return nil
 }
 
-// monitor waits for process exit and distinguishes between intentional and accidental termination.
 func (m *Manager) monitor(name string, cmd *exec.Cmd, logWg *sync.WaitGroup) {
 	defer m.wg.Done()
 

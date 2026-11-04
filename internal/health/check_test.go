@@ -219,7 +219,7 @@ func TestChecker_Run(t *testing.T) {
 
 	tests := []struct {
 		dialFn   func(context.Context, string) (net.Conn, error)
-		httpFn   func(*http.Request) (*http.Response, error)
+		httpFn   func(context.Context, int) (*http.Response, error)
 		name     string
 		confFile string
 		wantErr  bool
@@ -230,7 +230,7 @@ func TestChecker_Run(t *testing.T) {
 			dialFn: func(_ context.Context, _ string) (net.Conn, error) {
 				return &mockDNSConn{response: validDNSHeader()}, nil
 			},
-			httpFn: func(_ *http.Request) (*http.Response, error) {
+			httpFn: func(_ context.Context, _ int) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader("OK")),
@@ -244,7 +244,7 @@ func TestChecker_Run(t *testing.T) {
 			dialFn: func(_ context.Context, _ string) (net.Conn, error) {
 				return &mockDNSConn{response: validDNSHeader()}, nil
 			},
-			httpFn: func(_ *http.Request) (*http.Response, error) {
+			httpFn: func(_ context.Context, _ int) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader("OK")),
@@ -267,7 +267,7 @@ func TestChecker_Run(t *testing.T) {
 			dialFn: func(_ context.Context, _ string) (net.Conn, error) {
 				return &mockDNSConn{response: validDNSHeader()}, nil
 			},
-			httpFn: func(_ *http.Request) (*http.Response, error) {
+			httpFn: func(_ context.Context, _ int) (*http.Response, error) {
 				return nil, errors.New("connection refused")
 			},
 			wantErr: true,
@@ -278,7 +278,7 @@ func TestChecker_Run(t *testing.T) {
 			dialFn: func(_ context.Context, _ string) (net.Conn, error) {
 				return &mockDNSConn{response: validDNSHeader()}, nil
 			},
-			httpFn: func(_ *http.Request) (*http.Response, error) {
+			httpFn: func(_ context.Context, _ int) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusInternalServerError,
 					Body:       io.NopCloser(strings.NewReader("Internal Error")),
@@ -299,7 +299,7 @@ func TestChecker_Run(t *testing.T) {
 					return nil, errors.New("agh dns port unreachable")
 				}
 			}(),
-			httpFn: func(_ *http.Request) (*http.Response, error) {
+			httpFn: func(_ context.Context, _ int) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       io.NopCloser(strings.NewReader("OK")),
@@ -331,7 +331,7 @@ func TestChecker_Run(t *testing.T) {
 			dialFn: func(_ context.Context, _ string) (net.Conn, error) {
 				return &mockDNSConn{response: validDNSHeader()}, nil
 			},
-			httpFn: func(_ *http.Request) (*http.Response, error) {
+			httpFn: func(_ context.Context, _ int) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       &mockBody{readErr: errors.New("drain error")},
@@ -345,7 +345,7 @@ func TestChecker_Run(t *testing.T) {
 			dialFn: func(_ context.Context, _ string) (net.Conn, error) {
 				return &mockDNSConn{response: validDNSHeader()}, nil
 			},
-			httpFn: func(_ *http.Request) (*http.Response, error) {
+			httpFn: func(_ context.Context, _ int) (*http.Response, error) {
 				return &http.Response{
 					StatusCode: http.StatusOK,
 					Body:       &mockBody{closeErr: errors.New("close error")},
@@ -410,26 +410,26 @@ func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 func TestDefaultDoHTTP(t *testing.T) {
-	reqBad, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://example.com", http.NoBody)
-	if err != nil {
-		t.Fatalf("failed to create bad request: %v", err)
-	}
-	respBad, err := defaultDoHTTP(reqBad)
+	respBad, err := defaultDoHTTP(t.Context(), 0)
 	if err == nil {
 		if closeErr := respBad.Body.Close(); closeErr != nil {
 			t.Logf("close error: %v", closeErr)
 		}
-		t.Error("expected error for non-loopback request")
+		t.Error("expected error for port 0")
+	}
+
+	respTooHigh, err := defaultDoHTTP(t.Context(), 70000)
+	if err == nil {
+		if closeErr := respTooHigh.Body.Close(); closeErr != nil {
+			t.Logf("close error: %v", closeErr)
+		}
+		t.Error("expected error for port > 65535")
 	}
 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 
-	reqCancel, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:3000", http.NoBody)
-	if err != nil {
-		t.Fatalf("failed to create request: %v", err)
-	}
-	respCancel, err := defaultDoHTTP(reqCancel)
+	respCancel, err := defaultDoHTTP(ctx, 3000)
 	if err == nil {
 		defer func() {
 			if closeErr := respCancel.Body.Close(); closeErr != nil {
@@ -443,7 +443,7 @@ func TestDefaultDoHTTP(t *testing.T) {
 	t.Cleanup(func() { httpClient.Transport = origTransport })
 
 	httpClient.Transport = roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		if req.URL.Path == "/redirect" {
+		if req.URL.Port() == "3001" {
 			return &http.Response{
 				StatusCode: http.StatusFound,
 				Header:     http.Header{"Location": {"/target"}},
@@ -458,11 +458,7 @@ func TestDefaultDoHTTP(t *testing.T) {
 		}, nil
 	})
 
-	reqNormal, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:3000/ok", http.NoBody)
-	if err != nil {
-		t.Fatalf("failed to create normal request: %v", err)
-	}
-	respNormal, err := defaultDoHTTP(reqNormal)
+	respNormal, err := defaultDoHTTP(t.Context(), 3000)
 	if err != nil {
 		t.Errorf("expected success from defaultDoHTTP, got %v", err)
 	} else {
@@ -471,17 +467,37 @@ func TestDefaultDoHTTP(t *testing.T) {
 		}
 	}
 
-	reqRedirect, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://127.0.0.1:3000/redirect", http.NoBody)
-	if err != nil {
-		t.Fatalf("failed to create redirect request: %v", err)
-	}
-	respRedirect, err := defaultDoHTTP(reqRedirect)
+	respRedirect, err := defaultDoHTTP(t.Context(), 3001)
 	if err != nil {
 		t.Errorf("expected success with ErrUseLastResponse on redirect, got %v", err)
 	} else {
 		if closeErr := respRedirect.Body.Close(); closeErr != nil {
 			t.Logf("failed to close respRedirect: %v", closeErr)
 		}
+	}
+
+	origNewReq := newHTTPRequest
+	t.Cleanup(func() { newHTTPRequest = origNewReq })
+	newHTTPRequest = func(_ context.Context, _, _ string, _ io.Reader) (*http.Request, error) {
+		return nil, errors.New("mock req error")
+	}
+	respErr, err := defaultDoHTTP(t.Context(), 80)
+	if err == nil {
+		if closeErr := respErr.Body.Close(); closeErr != nil {
+			t.Logf("failed to close respErr: %v", closeErr)
+		}
+		t.Error("expected error when newHTTPRequest fails")
+	}
+}
+
+func TestDefaultNewHTTPRequest(t *testing.T) {
+	req, err := defaultNewHTTPRequest(t.Context(), http.MethodGet, "http://127.0.0.1:80", http.NoBody)
+	if err != nil || req == nil {
+		t.Fatalf("expected valid request, got %v", err)
+	}
+
+	if _, err := defaultNewHTTPRequest(t.Context(), "BAD\x00METHOD", "http://127.0.0.1:80", http.NoBody); err == nil {
+		t.Error("expected error on invalid HTTP method")
 	}
 }
 
@@ -493,7 +509,7 @@ func TestSetHooksForTest(t *testing.T) {
 			dialCalled = true
 			return nil, errors.New("dial hook")
 		},
-		func(_ *http.Request) (*http.Response, error) {
+		func(_ context.Context, _ int) (*http.Response, error) {
 			httpCalled = true
 			return nil, errors.New("http hook")
 		},
@@ -506,11 +522,7 @@ func TestSetHooksForTest(t *testing.T) {
 		t.Error("expected dial hook to be called")
 	}
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://127.0.0.1", http.NoBody)
-	if err != nil {
-		t.Fatalf("failed to create request: %v", err)
-	}
-	resp, err := doHTTP(req)
+	resp, err := doHTTP(context.Background(), 80)
 	if err == nil {
 		if closeErr := resp.Body.Close(); closeErr != nil {
 			t.Logf("close error: %v", closeErr)
@@ -525,14 +537,89 @@ func TestSetHooksForTest(t *testing.T) {
 }
 
 func TestParseEndpoints_EdgeCases(t *testing.T) {
-	w, d := parseSectionField("http", "address", "")
-	if w != "" || d != "" {
-		t.Errorf("expected empty results for empty val, got web=%q dns=%q", w, d)
+	cases := []struct {
+		name     string
+		yamlData string
+		wantDNS  string
+		wantPort int
+	}{
+		{
+			name:     "Empty",
+			yamlData: "",
+			wantPort: 80,
+			wantDNS:  "",
+		},
+		{
+			name:     "HttpWithPprofBeforeAddress",
+			yamlData: "http:\n  pprof:\n    port: 6060\n    enabled: false\n  address: 0.0.0.0:8080\n  session_ttl: 720h\ndns:\n  port: 53\n",
+			wantPort: 8080,
+			wantDNS:  "127.0.0.1:53",
+		},
+		{
+			name:     "HttpWithQuotes",
+			yamlData: "http:\n  address: \"0.0.0.0:8000\"\ndns:\n  port: 5353\n",
+			wantPort: 8000,
+			wantDNS:  "127.0.0.1:5353",
+		},
+		{
+			name: "StandardAGHConfigWithPprofAndDOH",
+			yamlData: "http:\n" +
+				"  pprof:\n" +
+				"    port: 6060\n" +
+				"    enabled: false\n" +
+				"  doh:\n" +
+				"    routes:\n" +
+				"      - GET /dns-query\n" +
+				"      - POST /dns-query\n" +
+				"      - GET /dns-query/{ClientID}\n" +
+				"      - POST /dns-query/{ClientID}\n" +
+				"    insecure_enabled: false\n" +
+				"  address: 0.0.0.0:80\n" +
+				"  session_ttl: 30d\n",
+			wantPort: 80,
+			wantDNS:  "",
+		},
+		{
+			name: "StandardDNSConfigWithBindHosts",
+			yamlData: "dns:\n" +
+				"  bind_hosts:\n" +
+				"    - 0.0.0.0\n" +
+				"  port: 53\n",
+			wantPort: 80,
+			wantDNS:  "127.0.0.1:53",
+		},
+		{
+			name:     "InvalidNumbersFallbacks",
+			yamlData: "http:\n  address: notaport\ndns:\n  port: -5\n",
+			wantPort: 80,
+			wantDNS:  "",
+		},
+		{
+			name:     "InvalidRootWithoutColon",
+			yamlData: "invalid_root_line\nhttp:\n  address: 80\n",
+			wantPort: 80,
+			wantDNS:  "",
+		},
+		{
+			name:     "OrphanIndentedLineBeforeSection",
+			yamlData: "  orphan: value\nhttp:\n  address: 80\n",
+			wantPort: 80,
+			wantDNS:  "",
+		},
+		{
+			name:     "SectionLineWithoutColon",
+			yamlData: "http:\n  no_colon_key\n  address: 80\n",
+			wantPort: 80,
+			wantDNS:  "",
+		},
 	}
 
-	data := "http:\n  address: \n  address: notaport\ndns:\n  port: notanint\n  port: -5\nunknown:\n  key: val\n"
-	web, dns := parseEndpoints([]byte(data))
-	if web != "http://127.0.0.1:3000/" || dns != "" {
-		t.Errorf("unexpected parse result: web=%s dns=%s", web, dns)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, d := parseEndpoints([]byte(tc.yamlData))
+			if p != tc.wantPort || d != tc.wantDNS {
+				t.Errorf("parseEndpoints() = (%d, %q), want (%d, %q)", p, d, tc.wantPort, tc.wantDNS)
+			}
+		})
 	}
 }

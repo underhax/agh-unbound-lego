@@ -10,9 +10,6 @@ import (
 	"github.com/underhax/adguardhome-unbound-lego/internal/util"
 )
 
-// pipeLogger consumes lines from an io.ReadCloser and emits them as structured slog entries.
-// ctx is threaded through so log emission stops when the supervisor root context is cancelled,
-// preventing goroutine leaks if the pipe outlives the managed process.
 func pipeLogger(ctx context.Context, name, stream string, r io.ReadCloser) {
 	defaultLevel := slog.LevelInfo
 	var parser util.LevelParser

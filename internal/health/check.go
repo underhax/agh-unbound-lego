@@ -43,11 +43,24 @@ func defaultDialDNS(ctx context.Context, address string) (net.Conn, error) {
 
 var dialDNS = defaultDialDNS
 
-func defaultDoHTTP(req *http.Request) (*http.Response, error) {
-	if req.URL == nil || req.URL.Scheme != "http" || !strings.HasPrefix(req.URL.Host, "127.0.0.1:") {
-		return nil, errors.New("HTTP healthcheck only permits requests to 127.0.0.1")
+func defaultNewHTTPRequest(ctx context.Context, method, url string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create HTTP request: %w", err)
 	}
-	// #nosec G704 - Target URL is strictly restricted to local loopback above.
+	return req, nil
+}
+
+var newHTTPRequest = defaultNewHTTPRequest
+
+func defaultDoHTTP(ctx context.Context, port int) (*http.Response, error) {
+	if port < 1 || port > 65535 {
+		return nil, errors.New("invalid HTTP healthcheck port")
+	}
+	req, err := newHTTPRequest(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%d/", port), http.NoBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AGH HTTP request: %w", err)
+	}
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute HTTP request: %w", err)
@@ -60,7 +73,7 @@ var doHTTP = defaultDoHTTP
 var randRead = rand.Read
 
 // SetHooksForTest overrides network operations for testing purposes and returns a restore function.
-func SetHooksForTest(dial func(context.Context, string) (net.Conn, error), do func(*http.Request) (*http.Response, error)) func() {
+func SetHooksForTest(dial func(context.Context, string) (net.Conn, error), do func(context.Context, int) (*http.Response, error)) func() {
 	origDial := dialDNS
 	origDo := doHTTP
 	if dial != nil {
@@ -88,19 +101,14 @@ func (c *Checker) Run() (err error) {
 		return fmt.Errorf("unbound DNS port check failed: %w", chkErr)
 	}
 
-	aghWebURL, aghDNSPort, readErr := c.resolveEndpoints()
+	webPort, aghDNSPort, readErr := c.resolveEndpoints()
 	if readErr != nil {
 		return readErr
 	}
 
-	req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, aghWebURL, http.NoBody)
-	if reqErr != nil {
-		return fmt.Errorf("failed to create AGH HTTP request: %w", reqErr)
-	}
-
-	resp, doErr := doHTTP(req)
+	resp, doErr := doHTTP(context.Background(), webPort)
 	if doErr != nil {
-		return fmt.Errorf("AGH HTTP check failed (%s): %w", aghWebURL, doErr)
+		return fmt.Errorf("AGH HTTP check failed (port %d): %w", webPort, doErr)
 	}
 	defer func() {
 		if _, copyErr := io.Copy(io.Discard, resp.Body); copyErr != nil && err == nil {
@@ -125,50 +133,65 @@ func (c *Checker) Run() (err error) {
 	return nil
 }
 
-// resolveEndpoints mitigates hardcoded assumptions by extracting dynamic port assignments negotiated during the setup wizard.
-func (c *Checker) resolveEndpoints() (webURL, dnsPort string, err error) {
-	webURL = "http://127.0.0.1:3000/"
-
+func (c *Checker) resolveEndpoints() (webPort int, dnsPort string, err error) {
 	yamlData, readErr := os.ReadFile(c.AGHConfPath)
 	if readErr != nil {
 		if os.IsNotExist(readErr) {
-			return webURL, "", nil
+			return 3000, "", nil
 		}
-		return "", "", fmt.Errorf("failed to read AGH config: %w", readErr)
+		return 0, "", fmt.Errorf("failed to read AGH config: %w", readErr)
 	}
 
-	parsedWeb, parsedDNS := parseEndpoints(yamlData)
-	if parsedWeb != "" {
-		webURL = parsedWeb
-	}
-
-	return webURL, parsedDNS, nil
+	parsedPort, parsedDNS := parseEndpoints(yamlData)
+	return parsedPort, parsedDNS, nil
 }
 
-func parseSectionField(section, key, val string) (parsedWeb, parsedDNS string) {
-	if val == "" {
-		return "", ""
+func extractPort(val string) int {
+	cleaned := strings.Trim(val, " \"'")
+	if _, portStr, err := net.SplitHostPort(cleaned); err == nil {
+		if p, parseErr := strconv.Atoi(portStr); parseErr == nil && p > 0 && p <= 65535 {
+			return p
+		}
 	}
+	if p, parseErr := strconv.Atoi(cleaned); parseErr == nil && p > 0 && p <= 65535 {
+		return p
+	}
+	return 0
+}
+
+func parseRootLine(trimmed string) string {
+	if sec, ok := strings.CutSuffix(trimmed, ":"); ok {
+		return sec
+	}
+	return ""
+}
+
+func parseSectionLine(section, trimmed string) (webPort int, dnsPort string) {
+	parts := strings.SplitN(trimmed, ":", 2)
+	if len(parts) != 2 {
+		return 0, ""
+	}
+	key := strings.TrimSpace(parts[0])
+	val := strings.TrimSpace(parts[1])
+
 	switch section {
 	case "http":
 		if key == "address" {
-			if _, port, splitErr := net.SplitHostPort(val); splitErr == nil {
-				return fmt.Sprintf("http://127.0.0.1:%s/", port), ""
-			}
+			return extractPort(val), ""
 		}
 	case "dns":
 		if key == "port" {
-			if p, parseErr := strconv.Atoi(val); parseErr == nil && p > 0 {
-				return "", fmt.Sprintf("127.0.0.1:%d", p)
+			if p := extractPort(val); p > 0 {
+				return 0, fmt.Sprintf("127.0.0.1:%d", p)
 			}
 		}
 	}
-	return "", ""
+	return 0, ""
 }
 
-func parseEndpoints(data []byte) (webURL, dnsPort string) {
-	webURL = "http://127.0.0.1:3000/"
+func parseEndpoints(data []byte) (webPort int, dnsPort string) {
 	var currentSection string
+	var childIndent int
 
 	for line := range strings.SplitSeq(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -176,24 +199,39 @@ func parseEndpoints(data []byte) (webURL, dnsPort string) {
 			continue
 		}
 
-		if strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, " ") {
-			currentSection = strings.TrimSuffix(trimmed, ":")
+		indent := len(line) - len(strings.TrimLeft(line, " "))
+		if indent == 0 {
+			currentSection = parseRootLine(trimmed)
+			childIndent = 0
 			continue
 		}
 
-		parts := strings.SplitN(trimmed, ":", 2)
-		if len(parts) == 2 {
-			newWeb, newDNS := parseSectionField(currentSection, strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
-			if newWeb != "" {
-				webURL = newWeb
-			}
-			if newDNS != "" {
-				dnsPort = newDNS
-			}
+		if currentSection == "" {
+			continue
+		}
+
+		if childIndent == 0 {
+			childIndent = indent
+		}
+
+		if indent != childIndent {
+			continue
+		}
+
+		wp, dp := parseSectionLine(currentSection, trimmed)
+		if wp > 0 && webPort == 0 {
+			webPort = wp
+		}
+		if dp != "" && dnsPort == "" {
+			dnsPort = dp
 		}
 	}
 
-	return webURL, dnsPort
+	if webPort == 0 {
+		webPort = 80
+	}
+
+	return webPort, dnsPort
 }
 
 // CheckDNS sends a raw DNS query (Type A for root) to verify the resolver is functionally answering.

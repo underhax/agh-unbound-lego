@@ -2,7 +2,6 @@ package util
 
 import "os"
 
-// allowedEnvVars contains environment variables safe to pass to child processes.
 var allowedEnvVars = []string{"PATH", "HOME"}
 
 // BuildCleanEnv returns a sanitized environment for exec.Cmd.

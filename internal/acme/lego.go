@@ -18,10 +18,17 @@ import (
 	"github.com/underhax/adguardhome-unbound-lego/internal/util"
 )
 
+func defaultCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, name)
+	cmd.Args = append(cmd.Args, args...)
+	return cmd
+}
+
 var (
 	legoBin            = "lego"
 	renewCheckInterval = 24 * time.Hour
 	executeAndLog      = defaultExecuteAndLog
+	execCommand        = defaultCommandContext
 )
 
 // SetExecuteAndLogForTest configures lego command execution mock for testing.
@@ -46,7 +53,6 @@ func NewManager(cfg *config.Config, onRenew func()) *Manager {
 	return &Manager{cfg: cfg, onRenew: onRenew}
 }
 
-// statCert returns the FileInfo for the managed certificate file.
 func (m *Manager) statCert() (os.FileInfo, error) {
 	info, err := os.Stat(filepath.Join(setup.DirLego, "certificates", m.cfg.ACMEDomain+".crt"))
 	if err != nil {
@@ -81,8 +87,8 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 		"--dns.resolvers", "1.1.1.1:53",
 	}
 
-	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
-	cmd := exec.CommandContext(ctx, legoBin, args...)
+	cmd := execCommand(ctx, legoBin)
+	cmd.Args = append(cmd.Args, args...)
 	cmd.Env = util.BuildCleanEnv("CF_DNS_API_TOKEN=" + string(m.cfg.CFDNSToken))
 
 	return cmd
@@ -100,8 +106,7 @@ func (m *Manager) EnsureCert(ctx context.Context) error {
 
 	if m.needsMigration() {
 		slog.Info("Detected v4 lego storage format, starting migration...")
-		// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
-		migrateCmd := exec.CommandContext(ctx, legoBin, "migrate", "--path", "/opt/lego")
+		migrateCmd := execCommand(ctx, legoBin, "migrate", "--path", setup.DirLego)
 		migrateCmd.Stdin = strings.NewReader("Y\n")
 		if out, err := migrateCmd.CombinedOutput(); err != nil {
 			slog.Debug("Lego migration skipped or failed", "error", err, "output", string(out))

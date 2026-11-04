@@ -50,7 +50,6 @@ func main() {
 	osExit(run(os.Args))
 }
 
-// performHealthcheck bypasses the supervisor lifecycle to execute isolated diagnostics.
 func performHealthcheck() int {
 	checker := &health.Checker{
 		UnboundPort: "127.0.0.1:5053",
@@ -64,7 +63,6 @@ func performHealthcheck() int {
 	return 0
 }
 
-// run encapsulates the supervisor's lifecycle to guarantee deferred cleanups prior to exit.
 func run(args []string) int {
 	if len(args) > 1 && args[1] == "health" {
 		return performHealthcheck()
@@ -77,7 +75,6 @@ func run(args []string) int {
 	return code
 }
 
-// runSupervisor executes the core supervisor lifecycle.
 func runSupervisor() (int, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -142,7 +139,6 @@ func runSupervisor() (int, error) {
 	}
 }
 
-// initInfrastructure ensures the container environment satisfies the strict execution assumptions of Unbound and AGH.
 func initInfrastructure() error {
 	if err := setup.Directories(); err != nil {
 		return fmt.Errorf("failed to initialize directories: %w", err)
@@ -156,7 +152,6 @@ func initInfrastructure() error {
 	return nil
 }
 
-// newOnRenew creates a restart handler invoked when Lego successfully renews the certificate.
 func newOnRenew(pm *process.Manager, aghArgs []string) func() {
 	return func() {
 		if err := pm.Restart("adguardhome", aghBin, aghArgs...); err != nil {
@@ -165,7 +160,6 @@ func newOnRenew(pm *process.Manager, aghArgs []string) func() {
 	}
 }
 
-// initLego integrates ACME provisions into the supervisor lifecycle prior to network component activation.
 func initLego(ctx context.Context, cfg *config.Config, pm *process.Manager, aghArgs []string) error {
 	acmeManager := acme.NewManager(cfg, newOnRenew(pm, aghArgs))
 	if err := acmeManager.EnsureCert(ctx); err != nil {
@@ -175,7 +169,6 @@ func initLego(ctx context.Context, cfg *config.Config, pm *process.Manager, aghA
 	return nil
 }
 
-// startServices orchestrates the specific startup dependency chain where AGH relies on Unbound's availability.
 func startServices(ctx context.Context, pm *process.Manager, aghArgs []string) error {
 	if err := pm.Start("unbound", unboundBin, unboundArgsFunc()...); err != nil {
 		return fmt.Errorf("failed to start unbound: %w", err)

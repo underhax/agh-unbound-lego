@@ -215,24 +215,15 @@ func TestNormalizeUnboundConfig_TempFileErrors(t *testing.T) {
 	UnboundConfFile = filepath.Join(tempDir, "unbound.conf")
 
 	t.Run("CreateTempFailsOnReadOnlyDir", func(t *testing.T) {
-		roDir := filepath.Join(tempDir, "readonly_dir")
-		if err := os.Mkdir(roDir, 0o700); err != nil {
-			t.Fatalf("failed to create dir: %v", err)
-		}
-		conf := filepath.Join(roDir, "unbound.conf")
+		conf := filepath.Join(tempDir, "unbound_createtemp.conf")
 		if err := os.WriteFile(conf, []byte("server:\n"), 0o600); err != nil {
 			t.Fatalf("failed to write conf: %v", err)
 		}
-		// #nosec G302 - Directory permissions restricted to read-only for failure testing.
-		if err := os.Chmod(roDir, 0o500); err != nil {
-			t.Fatalf("failed to chmod dir: %v", err)
+		origCreateTemp := createTemp
+		t.Cleanup(func() { createTemp = origCreateTemp })
+		createTemp = func(_, _ string) (*os.File, error) {
+			return nil, errors.New("temp create error")
 		}
-		t.Cleanup(func() {
-			// #nosec G302 - Directory permissions restored for cleanup.
-			if err := os.Chmod(roDir, 0o700); err != nil {
-				t.Logf("cleanup chmod failed: %v", err)
-			}
-		})
 		UnboundConfFile = conf
 		if err := normalizeUnboundConfig(); err == nil {
 			t.Error("expected error when temp file creation fails")
@@ -240,42 +231,23 @@ func TestNormalizeUnboundConfig_TempFileErrors(t *testing.T) {
 	})
 
 	t.Run("DeferRemoveErrorLogged", func(t *testing.T) {
-		subDir := filepath.Join(tempDir, "unremovable_sub")
-		if err := os.Mkdir(subDir, 0o700); err != nil {
-			t.Fatalf("failed to create dir: %v", err)
-		}
-		confFile := filepath.Join(subDir, "unbound.conf")
+		confFile := filepath.Join(tempDir, "unbound_rename.conf")
 		if err := os.WriteFile(confFile, []byte("server:\n"), 0o600); err != nil {
 			t.Fatalf("failed to write conf: %v", err)
 		}
 		UnboundConfFile = confFile
 
-		origClose := closeFile
+		origRename := renameFile
+		origRemove := removeFile
 		t.Cleanup(func() {
-			closeFile = origClose
-			// #nosec G302 - Directory permissions restored for cleanup.
-			if err := os.Chmod(subDir, 0o700); err != nil {
-				t.Logf("cleanup chmod failed: %v", err)
-			}
+			renameFile = origRename
+			removeFile = origRemove
 		})
-		closeFile = func(f *os.File) error {
-			if err := f.Close(); err != nil {
-				t.Logf("test close failed: %v", err)
-			}
-			if err := os.Remove(confFile); err != nil {
-				t.Logf("remove conf failed: %v", err)
-			}
-			if err := os.Mkdir(confFile, 0o700); err != nil {
-				t.Logf("mkdir conflict failed: %v", err)
-			}
-			if err := os.WriteFile(filepath.Join(confFile, "child"), []byte("data"), 0o600); err != nil {
-				t.Logf("write child failed: %v", err)
-			}
-			// #nosec G302 - Directory permissions restricted for failure path test.
-			if err := os.Chmod(subDir, 0o500); err != nil {
-				t.Logf("test chmod failed: %v", err)
-			}
-			return nil
+		renameFile = func(_, _ string) error {
+			return errors.New("rename error")
+		}
+		removeFile = func(_ string) error {
+			return errors.New("remove error")
 		}
 
 		if err := normalizeUnboundConfig(); err == nil {
@@ -546,5 +518,8 @@ func TestDefaultFileOperations_ErrorPaths(t *testing.T) {
 	}
 	if _, err := defaultWriteString(f, "data"); err == nil {
 		t.Error("expected write error on closed file")
+	}
+	if _, err := defaultCreateTemp(filepath.Join(tempDir, "nonexistent_dir"), "test"); err == nil {
+		t.Error("expected create temp error on invalid directory")
 	}
 }
