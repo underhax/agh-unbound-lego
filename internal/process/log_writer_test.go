@@ -33,7 +33,7 @@ func TestPipeLogger_StructuredOutput(t *testing.T) {
 	if err := pw.Close(); err != nil {
 		t.Fatalf("Failed to close pipe writer: %v", err)
 	}
-	<-done // Ensure pipeLogger has finished all slog calls
+	<-done
 
 	var logEntry map[string]any
 
@@ -71,6 +71,9 @@ func TestPipeLogger_StderrLevels(t *testing.T) {
 	if _, err := pw.Write([]byte("2026/03/28 [info] starting\n")); err != nil {
 		t.Fatalf("Failed to write info log to pipe: %v", err)
 	}
+	if _, err := pw.Write([]byte("2026/03/28 [warn] warning\n")); err != nil {
+		t.Fatalf("Failed to write warn log to pipe: %v", err)
+	}
 	if _, err := pw.Write([]byte("2026/03/28 [error] failed\n")); err != nil {
 		t.Fatalf("Failed to write error log to pipe: %v", err)
 	}
@@ -81,12 +84,15 @@ func TestPipeLogger_StderrLevels(t *testing.T) {
 
 	output := buf.String()
 	if !strings.Contains(output, `"level":"WARN"`) || !strings.Contains(output, "some raw error") {
-		t.Errorf("Raw stderr should default to WARN")
+		t.Errorf("raw stderr should default to WARN: %s", output)
 	}
 	if !strings.Contains(output, `"level":"INFO"`) || !strings.Contains(output, "[info] starting") {
-		t.Errorf("Stderr with [info] should map to INFO")
+		t.Errorf("stderr with [info] should map to INFO: %s", output)
+	}
+	if !strings.Contains(output, "[warn] warning") {
+		t.Errorf("stderr with [warn] should map to WARN: %s", output)
 	}
 	if !strings.Contains(output, `"level":"ERROR"`) || !strings.Contains(output, "[error] failed") {
-		t.Errorf("Stderr with [error] should map to ERROR")
+		t.Errorf("stderr with [error] should map to ERROR: %s", output)
 	}
 }

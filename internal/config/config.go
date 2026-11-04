@@ -4,14 +4,11 @@ package config
 import (
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"golang.org/x/net/idna"
 )
 
 // DefaultSecretsDir points to the standard location for Docker Swarm/Compose secrets.
@@ -37,11 +34,10 @@ type Config struct {
 func Load(secretsDir string) (*Config, error) {
 	rawLogLevel := os.Getenv("LOG_LEVEL")
 	if rawLogLevel == "" {
-		rawLogLevel = "info" // Default safe level
+		rawLogLevel = "info"
 	}
 
 	var logLevel slog.Level
-	// Strict validation prevents silent fallbacks masking configuration drifts.
 	switch strings.ToLower(rawLogLevel) {
 	case "debug":
 		logLevel = slog.LevelDebug
@@ -73,21 +69,7 @@ func Load(secretsDir string) (*Config, error) {
 	var domain, email, cfToken string
 
 	if legoEnable {
-		domain = os.Getenv("ACME_DOMAIN")
-		if err = validateDomain(domain); err != nil {
-			return nil, fmt.Errorf("invalid ACME_DOMAIN: %w", err)
-		}
-
-		email, err = readSecret(secretsDir, "acme_email")
-		if err != nil {
-			return nil, err
-		}
-
-		if err = validateEmail(email); err != nil {
-			return nil, fmt.Errorf("invalid ACME_EMAIL: %w", err)
-		}
-
-		cfToken, err = readSecret(secretsDir, "cf_dns_api_token")
+		domain, email, cfToken, err = readLegoSecrets(secretsDir)
 		if err != nil {
 			return nil, err
 		}
@@ -103,38 +85,59 @@ func Load(secretsDir string) (*Config, error) {
 	}, nil
 }
 
-// readSecret securely reads a secret from a file mounted by Docker.
-// Trims whitespace/newlines to prevent unexpected authentication failures.
+func readLegoSecrets(secretsDir string) (domain, email, cfToken string, err error) {
+	domain, err = readSecret(secretsDir, "acme_domain")
+	if err != nil {
+		return "", "", "", err
+	}
+
+	if err = validateDomain(domain); err != nil {
+		return "", "", "", fmt.Errorf("invalid acme_domain: %w", err)
+	}
+
+	email, err = readSecret(secretsDir, "acme_email")
+	if err != nil {
+		return "", "", "", err
+	}
+
+	if err = validateEmail(email); err != nil {
+		return "", "", "", fmt.Errorf("invalid acme_email: %w", err)
+	}
+
+	cfToken, err = readSecret(secretsDir, "cf_dns_api_token")
+	if err != nil {
+		return "", "", "", err
+	}
+
+	return domain, email, cfToken, nil
+}
+
 func readSecret(dir, filename string) (string, error) {
-	const maxSecretSize = 4096 // Defence in depth: prevents OOM if a mount error exposes a large file.
+	const maxSecretSize = 4096
 
 	path := filepath.Clean(filepath.Join(dir, filename))
 
-	// Prevent directory traversal attacks if filename was ever dynamic
 	rel, err := filepath.Rel(dir, path)
 	if err != nil || strings.HasPrefix(rel, "..") {
 		return "", fmt.Errorf("invalid secret path: %s", path)
 	}
 
-	// #nosec G304 -- path is validated above against directory traversal.
-	f, err := os.Open(path)
+	info, err := os.Stat(path)
 	if err != nil {
-		return "", fmt.Errorf("failed to open secret '%s': %w", filename, err)
+		return "", fmt.Errorf("failed to stat secret '%s': %w", filename, err)
 	}
-	defer func() {
-		if closeErr := f.Close(); closeErr != nil {
-			slog.Debug("failed to close secret file", "error", closeErr)
-		}
-	}()
 
-	limited := io.LimitReader(f, maxSecretSize+1)
-	data, err := io.ReadAll(limited)
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("secret '%s' is not a regular file", filename)
+	}
+
+	if info.Size() > maxSecretSize {
+		return "", fmt.Errorf("secret '%s' exceeds %d bytes", filename, maxSecretSize)
+	}
+
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", fmt.Errorf("failed to read secret '%s': %w", filename, err)
-	}
-
-	if len(data) > maxSecretSize {
-		return "", fmt.Errorf("secret '%s' exceeds %d bytes", filename, maxSecretSize)
 	}
 
 	secret := strings.TrimSpace(string(data))
@@ -145,13 +148,40 @@ func readSecret(dir, filename string) (string, error) {
 	return secret, nil
 }
 
-// validateDomain strictly validates and normalizes a domain using the official IDNA profile.
+func validateDomainLabel(label string) error {
+	if label == "" || len(label) > 63 {
+		return errors.New("domain label length must be between 1 and 63 characters")
+	}
+	if label[0] == '-' || label[len(label)-1] == '-' {
+		return errors.New("domain label cannot start or end with a hyphen")
+	}
+	for _, c := range label {
+		isAlphaNum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		if !isAlphaNum && c != '-' {
+			return fmt.Errorf("invalid character '%c' in domain label", c)
+		}
+	}
+	return nil
+}
+
+// validateDomain strictly validates a domain per RFC 1123 / RFC 952.
 func validateDomain(domain string) error {
 	if domain == "" {
-		return errors.New("ACME_DOMAIN is required when LEGO_ENABLE is true")
+		return errors.New("acme_domain is required when LEGO_ENABLE is true")
 	}
-	if _, err := idna.Lookup.ToASCII(domain); err != nil {
-		return fmt.Errorf("ACME_DOMAIN validation failed: %w", err)
+	if len(domain) > 253 {
+		return errors.New("domain name exceeds maximum length of 253 characters")
+	}
+
+	labels := strings.Split(domain, ".")
+	if len(labels) < 2 {
+		return errors.New("domain must contain at least two labels")
+	}
+
+	for _, label := range labels {
+		if err := validateDomainLabel(label); err != nil {
+			return err
+		}
 	}
 	return nil
 }

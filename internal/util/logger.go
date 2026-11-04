@@ -23,7 +23,6 @@ func StreamToLog(ctx context.Context, name, stream string, r io.ReadCloser, leve
 
 	scanner := bufio.NewScanner(r)
 
-	// Sized to handle long AdGuard Home log entries without triggering bufio.ErrTooLong.
 	const maxLogLine = 64 * 1024
 	buf := make([]byte, maxLogLine)
 	scanner.Buffer(buf, maxLogLine)

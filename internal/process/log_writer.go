@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/underhax/agh-unbound-lego/internal/util"
+	"github.com/underhax/adguardhome-unbound-lego/internal/util"
 )
 
 // pipeLogger consumes lines from an io.ReadCloser and emits them as structured slog entries.
@@ -18,8 +18,6 @@ func pipeLogger(ctx context.Context, name, stream string, r io.ReadCloser) {
 	var parser util.LevelParser
 
 	if stream == "stderr" {
-		// AGH writes mixed-severity output to stderr. Parse embedded markers to preserve
-		// the original severity rather than promoting everything to Warn indiscriminately.
 		defaultLevel = slog.LevelWarn
 		parser = func(line string) slog.Level {
 			lower := strings.ToLower(line)

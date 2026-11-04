@@ -13,12 +13,30 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/underhax/agh-unbound-lego/internal/acme"
-	"github.com/underhax/agh-unbound-lego/internal/config"
-	"github.com/underhax/agh-unbound-lego/internal/health"
-	"github.com/underhax/agh-unbound-lego/internal/process"
-	"github.com/underhax/agh-unbound-lego/internal/setup"
-	"github.com/underhax/agh-unbound-lego/internal/util"
+	"github.com/underhax/adguardhome-unbound-lego/internal/acme"
+	"github.com/underhax/adguardhome-unbound-lego/internal/config"
+	"github.com/underhax/adguardhome-unbound-lego/internal/health"
+	"github.com/underhax/adguardhome-unbound-lego/internal/process"
+	"github.com/underhax/adguardhome-unbound-lego/internal/setup"
+	"github.com/underhax/adguardhome-unbound-lego/internal/util"
+)
+
+func defaultUnboundArgs() []string {
+	return []string{"-d", "-c", setup.UnboundConfFile}
+}
+
+var (
+	osExit                 = os.Exit
+	osSetenv               = os.Setenv
+	unboundBin             = "unbound"
+	unboundArgsFunc        = defaultUnboundArgs
+	aghBin                 = "/opt/adguardhome/AdGuardHome"
+	secretsDir             = config.DefaultSecretsDir
+	initInfrastructureFunc = initInfrastructure
+	initLegoFunc           = initLego
+	startServicesFunc      = startServices
+	checkDNSFunc           = health.CheckDNS
+	unboundWaitTimeout     = 10 * time.Second
 )
 
 func setLogger(level slog.Level) {
@@ -29,39 +47,44 @@ func setLogger(level slog.Level) {
 }
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "health" {
-		performHealthcheck()
-		return
-	}
-
-	code, err := run()
-	if err != nil {
-		slog.Error("Supervisor failed", "error", err)
-	}
-	os.Exit(code)
+	osExit(run(os.Args))
 }
 
 // performHealthcheck bypasses the supervisor lifecycle to execute isolated diagnostics.
-func performHealthcheck() {
+func performHealthcheck() int {
 	checker := &health.Checker{
 		UnboundPort: "127.0.0.1:5053",
 		AGHConfPath: filepath.Join(setup.DirAGHConf, "AdGuardHome.yaml"),
 	}
 	if err := checker.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Healthcheck failed: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 	fmt.Println("Healthcheck passed")
+	return 0
 }
 
-// run encapsulates the supervisor's lifecycle to guarantee deferred cleanups prior to os.Exit.
-func run() (int, error) {
+// run encapsulates the supervisor's lifecycle to guarantee deferred cleanups prior to exit.
+func run(args []string) int {
+	if len(args) > 1 && args[1] == "health" {
+		return performHealthcheck()
+	}
+
+	code, err := runSupervisor()
+	if err != nil {
+		slog.Error("Supervisor failed", "error", err)
+	}
+	return code
+}
+
+// runSupervisor executes the core supervisor lifecycle.
+func runSupervisor() (int, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	setLogger(slog.LevelInfo)
 
-	cfg, err := config.Load(config.DefaultSecretsDir)
+	cfg, err := config.Load(secretsDir)
 	if err != nil {
 		return 1, fmt.Errorf("configuration failure: %w", err)
 	}
@@ -69,14 +92,14 @@ func run() (int, error) {
 	setLogger(cfg.LogLevel)
 
 	if cfg.DisableECN {
-		if err := os.Setenv("QUIC_GO_DISABLE_ECN", "true"); err != nil {
+		if err := osSetenv("QUIC_GO_DISABLE_ECN", "true"); err != nil {
 			return 1, fmt.Errorf("failed to disable QUIC ECN: %w", err)
 		}
 	}
 
 	slog.Info("Supervisor starting", "domain", cfg.ACMEDomain, "log_level", cfg.LogLevel.String())
 
-	if err := initInfrastructure(); err != nil {
+	if err := initInfrastructureFunc(); err != nil {
 		return 1, err
 	}
 
@@ -90,12 +113,12 @@ func run() (int, error) {
 	}
 
 	if cfg.LegoEnable {
-		if err := initLego(ctx, cfg, pm, aghArgs); err != nil {
+		if err := initLegoFunc(ctx, cfg, pm, aghArgs); err != nil {
 			return 1, err
 		}
 	}
 
-	if err := startServices(ctx, pm, aghArgs); err != nil {
+	if err := startServicesFunc(ctx, pm, aghArgs); err != nil {
 		pm.StopAll(5 * time.Second)
 		return 1, err
 	}
@@ -133,16 +156,18 @@ func initInfrastructure() error {
 	return nil
 }
 
-// initLego integrates ACME provisions into the supervisor lifecycle prior to network component activation.
-// onRenew restarts AGH directly without routing through OS signals,
-// removing the shell-execution surface of the --renew-hook mechanism.
-func initLego(ctx context.Context, cfg *config.Config, pm *process.Manager, aghArgs []string) error {
-	onRenew := func() {
-		if err := pm.Restart("adguardhome", "/opt/adguardhome/AdGuardHome", aghArgs...); err != nil {
+// newOnRenew creates a restart handler invoked when Lego successfully renews the certificate.
+func newOnRenew(pm *process.Manager, aghArgs []string) func() {
+	return func() {
+		if err := pm.Restart("adguardhome", aghBin, aghArgs...); err != nil {
 			slog.Error("Failed to restart AdGuard Home after certificate renewal", "error", err)
 		}
 	}
-	acmeManager := acme.NewManager(cfg, onRenew)
+}
+
+// initLego integrates ACME provisions into the supervisor lifecycle prior to network component activation.
+func initLego(ctx context.Context, cfg *config.Config, pm *process.Manager, aghArgs []string) error {
+	acmeManager := acme.NewManager(cfg, newOnRenew(pm, aghArgs))
 	if err := acmeManager.EnsureCert(ctx); err != nil {
 		return fmt.Errorf("failed to ensure TLS certificate: %w", err)
 	}
@@ -152,21 +177,19 @@ func initLego(ctx context.Context, cfg *config.Config, pm *process.Manager, aghA
 
 // startServices orchestrates the specific startup dependency chain where AGH relies on Unbound's availability.
 func startServices(ctx context.Context, pm *process.Manager, aghArgs []string) error {
-	if err := pm.Start("unbound", "unbound", "-d", "-c", setup.UnboundConfFile); err != nil {
+	if err := pm.Start("unbound", unboundBin, unboundArgsFunc()...); err != nil {
 		return fmt.Errorf("failed to start unbound: %w", err)
 	}
 
-	// Backoff avoids redundant DNS probes during Unbound's initialization window
-	// while still catching fast starts without unnecessary delay.
-	unboundReady := util.PollImmediateWithBackoff(10*time.Second, 10*time.Millisecond, 500*time.Millisecond, func() bool {
-		return health.CheckDNS(ctx, "127.0.0.1:5053") == nil
+	unboundReady := util.PollImmediateWithBackoff(unboundWaitTimeout, 10*time.Millisecond, 500*time.Millisecond, func() bool {
+		return checkDNSFunc(ctx, "127.0.0.1:5053") == nil
 	})
 
 	if !unboundReady {
 		return errors.New("unbound failed to become ready in time")
 	}
 
-	if err := pm.Start("adguardhome", "/opt/adguardhome/AdGuardHome", aghArgs...); err != nil {
+	if err := pm.Start("adguardhome", aghBin, aghArgs...); err != nil {
 		return fmt.Errorf("failed to start AdGuard Home: %w", err)
 	}
 

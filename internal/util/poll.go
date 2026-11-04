@@ -5,23 +5,35 @@ import (
 	"time"
 )
 
+func defaultSleep(d time.Duration) {
+	time.Sleep(d)
+}
+
+func defaultNow() time.Time {
+	return time.Now()
+}
+
+var (
+	timeSleep = defaultSleep
+	timeNow   = defaultNow
+)
+
 // PollImmediateWithBackoff loops with exponentially increasing delay capped at maxDelay.
 // The total wait is strictly bounded by timeout. Suitable for readiness probes where
 // the service may already be up at the first call.
 func PollImmediateWithBackoff(timeout, initialDelay, maxDelay time.Duration, condition func() bool) bool {
-	deadline := time.Now().Add(timeout)
+	deadline := timeNow().Add(timeout)
 	delay := initialDelay
 
 	for {
 		if condition() {
 			return true
 		}
-		remaining := time.Until(deadline)
+		remaining := deadline.Sub(timeNow())
 		if remaining <= 0 {
 			return false
 		}
-		// Cap sleep to remaining time so we never overshoot the deadline.
-		time.Sleep(min(delay, remaining))
+		timeSleep(min(delay, remaining))
 		delay = min(delay*2, maxDelay)
 	}
 }
@@ -31,18 +43,15 @@ func PollImmediateWithBackoff(timeout, initialDelay, maxDelay time.Duration, con
 // probes where the process needs at least one scheduling quantum before the first check
 // is meaningful.
 func PollAfterDelayWithBackoff(timeout, initialDelay, maxDelay time.Duration, condition func() bool) bool {
-	deadline := time.Now().Add(timeout)
+	deadline := timeNow().Add(timeout)
 	delay := initialDelay
 
 	for {
-		remaining := time.Until(deadline)
+		remaining := deadline.Sub(timeNow())
 		if remaining <= 0 {
 			return false
 		}
-		// Cap sleep to remaining time so we never overshoot the deadline.
-		time.Sleep(min(delay, remaining))
-		// Always check condition after waking, even if the deadline has now passed.
-		// The process may have exited during the final sleep window.
+		timeSleep(min(delay, remaining))
 		if condition() {
 			return true
 		}

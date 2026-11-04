@@ -10,8 +10,15 @@ server:
     # Disable setuid drop since the process is already running as an unprivileged container user
     username: ""
 
+    # Disable chroot and pidfile for unprivileged container execution
+    chroot: ""
+    pidfile: ""
+
     # Listen on localhost (supervisor and AGH are in the same network namespace)
     interface: 127.0.0.1
+
+    # Prevent iterative queries to localhost
+    do-not-query-localhost: yes
 
     # --- PERFORMANCE & RESOURCE SCALING ---
     # Number of CPU cores to use. Set to match the 'cpus' limit in docker-compose.
@@ -34,6 +41,11 @@ server:
     so-sndbuf: 1m
     so-rcvbuf: 1m
     edns-buffer-size: 1232
+    max-udp-size: 1232
+
+    # Enable response optimization and round-robin distribution
+    minimal-responses: yes
+    rrset-roundrobin: yes
 
     # --- CACHE OPTIMIZATION ---
     prefetch: yes
@@ -49,6 +61,7 @@ server:
     hide-version: yes
     use-caps-for-id: yes
     deny-any: yes
+    unwanted-reply-threshold: 10000
 
     harden-glue: yes
     harden-dnssec-stripped: yes
@@ -63,6 +76,10 @@ server:
 
     # --- ACCESS CONTROL & REBINDING PROTECTION ---
     access-control: 127.0.0.0/8 allow
+
+    # Block responses pointing to loopback addresses (DNS Rebinding protection)
+    private-address: 127.0.0.0/8
+    private-address: ::ffff:0:0/96
 
     private-address: 10.0.0.0/8
     private-address: 172.16.0.0/12

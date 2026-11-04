@@ -1,7 +1,7 @@
 # Security Policy
 
 ## Supported Versions
-We currently provide security updates for the following versions of agh-unbound-lego:
+We currently provide security updates for the following versions of adguardhome-unbound-lego:
 
 | Version | Supported          |
 | ------- | ------------------ |

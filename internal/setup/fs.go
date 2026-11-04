@@ -3,6 +3,7 @@ package setup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,7 +15,7 @@ import (
 )
 
 // Standardized directory and file paths used across the supervisor.
-const (
+var (
 	DirAGHWork = "/opt/adguardhome/work"
 	DirAGHConf = "/opt/adguardhome/conf"
 	DirUnbound = "/opt/unbound"
@@ -24,8 +25,51 @@ const (
 	UnboundDefaultConf = "/etc/unbound/unbound.conf.default"
 )
 
+func defaultCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	// #nosec G204 - Command and arguments are internally controlled.
+	return exec.CommandContext(ctx, name, args...)
+}
+
+func defaultSyncFile(f *os.File) error {
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync failed: %w", err)
+	}
+	return nil
+}
+
+func defaultCloseFile(f *os.File) error {
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close failed: %w", err)
+	}
+	return nil
+}
+
+func defaultWriteString(f *os.File, s string) (int, error) {
+	n, err := f.WriteString(s)
+	if err != nil {
+		return n, fmt.Errorf("write failed: %w", err)
+	}
+	return n, nil
+}
+
+var (
+	execCommand = defaultCommandContext
+	syncFile    = defaultSyncFile
+	closeFile   = defaultCloseFile
+	writeString = defaultWriteString
+)
+
+func defaultRunAnchor(ctx context.Context) error {
+	cmd := execCommand(ctx, "unbound-anchor", "-a", filepath.Join(DirUnbound, "root.key"))
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to run unbound-anchor: %w", err)
+	}
+	return nil
+}
+
+var runAnchor = defaultRunAnchor
+
 // Directories establishes the required runtime filesystem skeleton.
-// Permissions are explicitly set to 0700 to restrict other users in the container.
 func Directories() error {
 	dirs := []string{DirAGHWork, DirAGHConf, DirUnbound, DirLego}
 
@@ -40,7 +84,7 @@ func Directories() error {
 // UnboundConfig guarantees a deterministic baseline state against potential volume-mount tampering or missing configs.
 func UnboundConfig() error {
 	if _, err := os.Stat(UnboundConfFile); os.IsNotExist(err) {
-		if err := copyFile(UnboundDefaultConf, UnboundConfFile, 0o640); err != nil {
+		if err := copyFile(UnboundDefaultConf, UnboundConfFile); err != nil {
 			return err
 		}
 	}
@@ -48,20 +92,11 @@ func UnboundConfig() error {
 	return normalizeUnboundConfig()
 }
 
-// normalizeUnboundConfig enforces the expected port and interface values.
-// This prevents container failure if a user-provided config has non-standard values,
-// which could happen when copying config from another project.
-func normalizeUnboundConfig() error {
-	data, err := os.ReadFile(UnboundConfFile)
-	if err != nil {
-		return fmt.Errorf("failed to read unbound config: %w", err)
-	}
-
+func normalizeConfigLines(data []byte) string {
 	var result []string
 	for line := range strings.SplitSeq(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
 
-		// Port and interface must be 5053 and 127.0.0.1 for the supervisor healthcheck to work.
 		switch {
 		case strings.HasPrefix(trimmed, "port:"):
 			line = "    port: 5053"
@@ -70,8 +105,10 @@ func normalizeUnboundConfig() error {
 		}
 		result = append(result, line)
 	}
+	return strings.Join(result, "\n")
+}
 
-	// Cleanup any orphan temp files from previous hard crashes to prevent disk pollution.
+func cleanupOldTempConfigs() {
 	oldTmps, err := filepath.Glob(filepath.Join(filepath.Dir(UnboundConfFile), "unbound.conf.*.tmp"))
 	if err != nil {
 		slog.Debug("failed to glob old temp config files", "error", err)
@@ -81,9 +118,17 @@ func normalizeUnboundConfig() error {
 			slog.Debug("failed to remove old temp config file", "file", f, "error", removeErr)
 		}
 	}
+}
 
-	// os.CreateTemp uses O_EXCL and randomizes the suffix to prevent symlink hijacking
-	// and eliminates CrashLoopBackOff DoS vulnerabilities caused by orphaned temp files.
+func normalizeUnboundConfig() error {
+	data, err := os.ReadFile(filepath.Clean(UnboundConfFile))
+	if err != nil {
+		return fmt.Errorf("failed to read unbound config: %w", err)
+	}
+
+	content := normalizeConfigLines(data)
+	cleanupOldTempConfigs()
+
 	tmpFile, err := os.CreateTemp(filepath.Dir(UnboundConfFile), "unbound.conf.*.tmp")
 	if err != nil {
 		return fmt.Errorf("failed to create temp unbound config: %w", err)
@@ -96,14 +141,13 @@ func normalizeUnboundConfig() error {
 		}
 	}()
 
-	if _, err := tmpFile.WriteString(strings.Join(result, "\n")); err != nil {
-		cerr := tmpFile.Close()
-		if cerr != nil {
-			return fmt.Errorf("write failed: %w, close failed: %w", err, cerr)
-		}
-		return fmt.Errorf("failed to write temp unbound config data: %w", err)
+	if _, err := writeString(tmpFile, content); err != nil {
+		return fmt.Errorf("failed to write temp unbound config data: %w", errors.Join(err, closeFile(tmpFile)))
 	}
-	if err := tmpFile.Close(); err != nil {
+	if err := syncFile(tmpFile); err != nil {
+		return fmt.Errorf("failed to sync temp unbound config data: %w", errors.Join(err, closeFile(tmpFile)))
+	}
+	if err := closeFile(tmpFile); err != nil {
 		return fmt.Errorf("failed to close temp unbound config: %w", err)
 	}
 
@@ -115,25 +159,19 @@ func normalizeUnboundConfig() error {
 }
 
 // TrustAnchor initializes the DNSSEC root key for unbound.
-// Unbound fails to start if auto-trust-anchor-file is missing.
 func TrustAnchor() error {
 	keyPath := filepath.Join(DirUnbound, "root.key")
 	if _, err := os.Stat(keyPath); err == nil {
 		return nil
 	}
 
-	// Prevent indefinite blocking if the external anchor server is unreachable.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// unbound-anchor returns non-zero on first-run bootstrap even on success, so the exit
-	// code is not a reliable signal. File presence and size are checked immediately after.
-	if err := exec.CommandContext(ctx, "unbound-anchor", "-a", "/opt/unbound/root.key").Run(); err != nil {
+	if err := runAnchor(ctx); err != nil {
 		slog.Debug("unbound-anchor bootstrap completed with non-zero exit code (expected behavior)", "error", err)
 	}
 
-	// Validate that the anchor file was actually created and is not empty.
-	// If the network is down during first boot, unbound-anchor fails silently.
 	if info, err := os.Stat(keyPath); err != nil {
 		return fmt.Errorf("trust anchor file missing after bootstrap attempt: %w", err)
 	} else if info.Size() == 0 {
@@ -143,27 +181,23 @@ func TrustAnchor() error {
 	return nil
 }
 
-// copyFile performs an atomic-like file clone ensuring sensitive file permissions are strictly duplicated.
-func copyFile(src, dst string, perm os.FileMode) (err error) {
-	// #nosec G304 -- Paths are provided by internal constants, not user input.
-	sourceFile, err := os.Open(src)
+func copyFile(src, dst string) (err error) {
+	sourceFile, err := os.Open(filepath.Clean(src))
 	if err != nil {
 		return fmt.Errorf("cannot open source file %s: %w", src, err)
 	}
 	defer func() {
-		if cerr := sourceFile.Close(); cerr != nil && err == nil {
+		if cerr := closeFile(sourceFile); cerr != nil && err == nil {
 			err = fmt.Errorf("failed to close source file: %w", cerr)
 		}
 	}()
 
-	// O_EXCL guards against concurrent supervisor instances silently overwriting a user-customised config on shared volume mounts during parallel container startup.
-	// #nosec G304 -- Paths are provided by internal constants, not user input.
-	destFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_EXCL, perm)
+	destFile, err := os.OpenFile(filepath.Clean(dst), os.O_CREATE|os.O_WRONLY|os.O_EXCL, 0o600)
 	if err != nil {
 		return fmt.Errorf("cannot create destination file %s: %w", dst, err)
 	}
 	defer func() {
-		if cerr := destFile.Close(); cerr != nil && err == nil {
+		if cerr := closeFile(destFile); cerr != nil && err == nil {
 			err = fmt.Errorf("failed to close destination file: %w", cerr)
 		}
 	}()
@@ -172,7 +206,7 @@ func copyFile(src, dst string, perm os.FileMode) (err error) {
 		return fmt.Errorf("failed to write data to %s: %w", dst, err)
 	}
 
-	if err := destFile.Sync(); err != nil {
+	if err := syncFile(destFile); err != nil {
 		return fmt.Errorf("failed to sync destination file: %w", err)
 	}
 	return nil

@@ -13,10 +13,25 @@ import (
 	"sync"
 	"time"
 
-	"github.com/underhax/agh-unbound-lego/internal/config"
-	"github.com/underhax/agh-unbound-lego/internal/setup"
-	"github.com/underhax/agh-unbound-lego/internal/util"
+	"github.com/underhax/adguardhome-unbound-lego/internal/config"
+	"github.com/underhax/adguardhome-unbound-lego/internal/setup"
+	"github.com/underhax/adguardhome-unbound-lego/internal/util"
 )
+
+var (
+	legoBin            = "lego"
+	renewCheckInterval = 24 * time.Hour
+	executeAndLog      = defaultExecuteAndLog
+)
+
+// SetExecuteAndLogForTest configures lego command execution mock for testing.
+func SetExecuteAndLogForTest(fn func(context.Context, *exec.Cmd, string) error) func() {
+	orig := executeAndLog
+	executeAndLog = fn
+	return func() {
+		executeAndLog = orig
+	}
+}
 
 // Manager handles ACME certificate issuance and renewal via the lego CLI.
 type Manager struct {
@@ -32,7 +47,6 @@ func NewManager(cfg *config.Config, onRenew func()) *Manager {
 }
 
 // statCert returns the FileInfo for the managed certificate file.
-// Centralises path construction so provider-specific layout changes require a single edit.
 func (m *Manager) statCert() (os.FileInfo, error) {
 	info, err := os.Stat(filepath.Join(setup.DirLego, "certificates", m.cfg.ACMEDomain+".crt"))
 	if err != nil {
@@ -54,7 +68,6 @@ func (m *Manager) getCertModTime() time.Time {
 	return info.ModTime()
 }
 
-// buildCmd constructs the exec.Cmd for lego with required arguments and secure ENV injection.
 func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 	args := []string{
 		action,
@@ -69,8 +82,7 @@ func (m *Manager) buildCmd(ctx context.Context, action string) *exec.Cmd {
 	}
 
 	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
-	cmd := exec.CommandContext(ctx, "lego", args...)
-
+	cmd := exec.CommandContext(ctx, legoBin, args...)
 	cmd.Env = util.BuildCleanEnv("CF_DNS_API_TOKEN=" + string(m.cfg.CFDNSToken))
 
 	return cmd
@@ -88,7 +100,8 @@ func (m *Manager) EnsureCert(ctx context.Context) error {
 
 	if m.needsMigration() {
 		slog.Info("Detected v4 lego storage format, starting migration...")
-		migrateCmd := exec.CommandContext(ctx, "lego", "migrate", "--path", "/opt/lego")
+		// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
+		migrateCmd := exec.CommandContext(ctx, legoBin, "migrate", "--path", "/opt/lego")
 		migrateCmd.Stdin = strings.NewReader("Y\n")
 		if out, err := migrateCmd.CombinedOutput(); err != nil {
 			slog.Debug("Lego migration skipped or failed", "error", err, "output", string(out))
@@ -110,11 +123,11 @@ func (m *Manager) EnsureCert(ctx context.Context) error {
 }
 
 // StartRenewTicker aligns polling thresholds with Cloudflare API allowances and Let's Encrypt throttling.
-func (m *Manager) StartRenewTicker(ctx context.Context) {
+func (m *Manager) StartRenewTicker(ctx context.Context) <-chan struct{} {
+	done := make(chan struct{})
 	go func() {
-		// Once-daily polling matches lego's built-in 30-day renewal threshold.
-		// More frequent checks waste ACME API quota without shortening the renewal window.
-		ticker := time.NewTicker(24 * time.Hour)
+		defer close(done)
+		ticker := time.NewTicker(renewCheckInterval)
 		defer ticker.Stop()
 
 		for {
@@ -131,8 +144,6 @@ func (m *Manager) StartRenewTicker(ctx context.Context) {
 					continue
 				}
 
-				// mtime comparison is reliable here because lego performs atomic certificate
-				// replacement via rename(2), guaranteeing mtime advances only on actual file change.
 				if m.getCertModTime().After(beforeMtime) {
 					slog.Info("TLS certificate renewed, triggering dependent service reload")
 					if m.onRenew != nil {
@@ -142,10 +153,10 @@ func (m *Manager) StartRenewTicker(ctx context.Context) {
 			}
 		}
 	}()
+	return done
 }
 
-// executeAndLog bridges the CLI output of the lego binary into the supervisor's unified structured logging namespace.
-func executeAndLog(ctx context.Context, cmd *exec.Cmd, processName string) error {
+func defaultExecuteAndLog(ctx context.Context, cmd *exec.Cmd, processName string) error {
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("failed to attach stdout pipe: %w", err)
@@ -159,8 +170,6 @@ func executeAndLog(ctx context.Context, cmd *exec.Cmd, processName string) error
 		return fmt.Errorf("failed to start process: %w", err)
 	}
 
-	// Guarantee all streams are fully consumed before returning,
-	// preventing log truncation if the process exits faster than we read.
 	var wg sync.WaitGroup
 	wg.Add(2)
 

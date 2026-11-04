@@ -11,37 +11,68 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"time"
-
-	"gopkg.in/yaml.v3"
 )
 
 const checkTimeout = 2 * time.Second
 
-// dnsDialer is used for UDP DNS queries, httpClient for TCP HTTP requests.
-// This separation is intentional: UDP and TCP require different dialers, and
-// connection pooling does not apply across protocol boundaries.
-var dnsDialer = &net.Dialer{Timeout: checkTimeout}
+type contextDialer interface {
+	DialContext(ctx context.Context, network, address string) (net.Conn, error)
+}
+
+var dnsDialer contextDialer = &net.Dialer{Timeout: checkTimeout}
 var httpClient = &http.Client{
 	Timeout: checkTimeout,
 	Transport: &http.Transport{
 		DisableKeepAlives: true,
 	},
-	// AGH admin panel should not redirect on the health probe path.
-	// Following redirects risks consuming the timeout budget on TLS or auth endpoints.
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
 }
 
-// aghConfig maps the minimal structure needed to extract binding ports.
-type aghConfig struct {
-	HTTP struct {
-		Address string `yaml:"address"`
-	} `yaml:"http"`
-	DNS struct {
-		Port int `yaml:"port"`
-	} `yaml:"dns"`
+func defaultDialDNS(ctx context.Context, address string) (net.Conn, error) {
+	conn, err := dnsDialer.DialContext(ctx, "udp", address)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial DNS: %w", err)
+	}
+	return conn, nil
+}
+
+var dialDNS = defaultDialDNS
+
+func defaultDoHTTP(req *http.Request) (*http.Response, error) {
+	if req.URL == nil || req.URL.Scheme != "http" || !strings.HasPrefix(req.URL.Host, "127.0.0.1:") {
+		return nil, errors.New("HTTP healthcheck only permits requests to 127.0.0.1")
+	}
+	// #nosec G704 - Target URL is strictly restricted to local loopback above.
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to execute HTTP request: %w", err)
+	}
+	return resp, nil
+}
+
+var doHTTP = defaultDoHTTP
+
+var randRead = rand.Read
+
+// SetHooksForTest overrides network operations for testing purposes and returns a restore function.
+func SetHooksForTest(dial func(context.Context, string) (net.Conn, error), do func(*http.Request) (*http.Response, error)) func() {
+	origDial := dialDNS
+	origDo := doHTTP
+	if dial != nil {
+		dialDNS = dial
+	}
+	if do != nil {
+		doHTTP = do
+	}
+	return func() {
+		dialDNS = origDial
+		doHTTP = origDo
+	}
 }
 
 // Checker provides external readiness probes decoupled from the internal process supervision tree.
@@ -67,12 +98,11 @@ func (c *Checker) Run() (err error) {
 		return fmt.Errorf("failed to create AGH HTTP request: %w", reqErr)
 	}
 
-	resp, doErr := httpClient.Do(req)
+	resp, doErr := doHTTP(req)
 	if doErr != nil {
 		return fmt.Errorf("AGH HTTP check failed (%s): %w", aghWebURL, doErr)
 	}
 	defer func() {
-		// Drain the response body to allow connection reuse in the Keep-Alive pool
 		if _, copyErr := io.Copy(io.Discard, resp.Body); copyErr != nil && err == nil {
 			err = fmt.Errorf("failed to drain response body: %w", copyErr)
 		}
@@ -107,22 +137,68 @@ func (c *Checker) resolveEndpoints() (webURL, dnsPort string, err error) {
 		return "", "", fmt.Errorf("failed to read AGH config: %w", readErr)
 	}
 
-	var cfg aghConfig
-	if parseErr := yaml.Unmarshal(yamlData, &cfg); parseErr == nil {
-		if _, port, splitErr := net.SplitHostPort(cfg.HTTP.Address); splitErr == nil {
-			webURL = fmt.Sprintf("http://127.0.0.1:%s/", port)
+	parsedWeb, parsedDNS := parseEndpoints(yamlData)
+	if parsedWeb != "" {
+		webURL = parsedWeb
+	}
+
+	return webURL, parsedDNS, nil
+}
+
+func parseSectionField(section, key, val string) (parsedWeb, parsedDNS string) {
+	if val == "" {
+		return "", ""
+	}
+	switch section {
+	case "http":
+		if key == "address" {
+			if _, port, splitErr := net.SplitHostPort(val); splitErr == nil {
+				return fmt.Sprintf("http://127.0.0.1:%s/", port), ""
+			}
 		}
-		if cfg.DNS.Port > 0 {
-			dnsPort = fmt.Sprintf("127.0.0.1:%d", cfg.DNS.Port)
+	case "dns":
+		if key == "port" {
+			if p, parseErr := strconv.Atoi(val); parseErr == nil && p > 0 {
+				return "", fmt.Sprintf("127.0.0.1:%d", p)
+			}
+		}
+	}
+	return "", ""
+}
+
+func parseEndpoints(data []byte) (webURL, dnsPort string) {
+	webURL = "http://127.0.0.1:3000/"
+	var currentSection string
+
+	for line := range strings.SplitSeq(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		if strings.HasSuffix(trimmed, ":") && !strings.Contains(trimmed, " ") {
+			currentSection = strings.TrimSuffix(trimmed, ":")
+			continue
+		}
+
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) == 2 {
+			newWeb, newDNS := parseSectionField(currentSection, strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+			if newWeb != "" {
+				webURL = newWeb
+			}
+			if newDNS != "" {
+				dnsPort = newDNS
+			}
 		}
 	}
 
-	return webURL, dnsPort, nil
+	return webURL, dnsPort
 }
 
 // CheckDNS sends a raw DNS query (Type A for root) to verify the resolver is functionally answering.
 func CheckDNS(ctx context.Context, address string) error {
-	conn, err := dnsDialer.DialContext(ctx, "udp", address)
+	conn, err := dialDNS(ctx, address)
 	if err != nil {
 		return fmt.Errorf("dialing %s failed: %w", address, err)
 	}
@@ -132,19 +208,14 @@ func CheckDNS(ctx context.Context, address string) error {
 		}
 	}()
 
-	// SetDeadline covers both Write and Read, bounding the entire exchange to 2 seconds.
-	// SetReadDeadline alone would leave Write unprotected if the kernel UDP send buffer saturates.
 	if err = conn.SetDeadline(time.Now().Add(checkTimeout)); err != nil {
 		return fmt.Errorf("failed to set deadline: %w", err)
 	}
 
-	// RFC 9476 standardized QNAME 'dns.healthcheck.arpa' (Type A, Class IN).
-	// Resolvers automatically exclude this domain from query logs to maintain clean statistics.
 	query := []byte("\xAA\xAA\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03dns\x0bhealthcheck\x04arpa\x00\x00\x01\x00\x01")
 
-	// Randomize TxID to prevent spoofed responses on shared or compromised networks.
 	var txID [2]byte
-	if _, err = rand.Read(txID[:]); err != nil {
+	if _, err = randRead(txID[:]); err != nil {
 		return fmt.Errorf("crypto/rand failed: %w", err)
 	}
 	query[0], query[1] = txID[0], txID[1]
@@ -153,15 +224,12 @@ func CheckDNS(ctx context.Context, address string) error {
 		return fmt.Errorf("failed to send DNS query: %w", err)
 	}
 
-	// 4096 bytes accommodates EDNS0 and DNSSEC responses (DNSKEY + RRSIG can exceed 1200 bytes).
-	// The pre-EDNS0 limit of 512 bytes causes silent truncation that still passes header validation.
 	buf := make([]byte, 4096)
 	n, err := conn.Read(buf)
 	if err != nil {
 		return fmt.Errorf("failed to read DNS response: %w", err)
 	}
 
-	// Minimum valid DNS header per RFC 1035 §4.1.
 	if n < 12 {
 		return fmt.Errorf("DNS response too short: %d bytes", n)
 	}
@@ -174,8 +242,6 @@ func CheckDNS(ctx context.Context, address string) error {
 		return errors.New("DNS response is not a reply (QR bit not set)")
 	}
 
-	// Extract RCODE from the lower 4 bits of byte 3.
-	// We consider SERVFAIL (2) and REFUSED (5) as definitive failures of the resolver's ability to serve.
 	rcode := buf[3] & 0x0F
 	if rcode == 2 || rcode == 5 {
 		return fmt.Errorf("DNS resolver returned error RCODE: %d", rcode)

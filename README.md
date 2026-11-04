@@ -1,283 +1,338 @@
-# agh-unbound-lego
+# adguardhome-unbound-lego
 
-This project provides a highly secure, all-in-one DNS resolution stack combining [**AdGuard Home**](https://github.com/AdguardTeam/AdGuardHome) (ad blocking and filtering), [**Unbound**](https://github.com/NLnetLabs/unbound) (recursive, validating, and caching DNS resolver), and [**Lego**](https://github.com/go-acme/lego) (ACME client for automated Let's Encrypt TLS certificates).
-
-[![CI](https://github.com/underhax/agh-unbound-lego/actions/workflows/ci.yml/badge.svg)](https://github.com/underhax/agh-unbound-lego/actions/workflows/ci.yml)
-[![GitHub last commit](https://img.shields.io/github/last-commit/underhax/agh-unbound-lego)](https://github.com/underhax/agh-unbound-lego/commits/main)
-[![GitHub issues](https://img.shields.io/github/issues/underhax/agh-unbound-lego)](https://github.com/underhax/agh-unbound-lego/issues)
-[![GitHub repo size](https://img.shields.io/github/repo-size/underhax/agh-unbound-lego)](https://github.com/underhax/agh-unbound-lego)
+[![CI](https://github.com/underhax/adguardhome-unbound-lego/actions/workflows/ci.yml/badge.svg)](https://github.com/underhax/adguardhome-unbound-lego/actions/workflows/ci.yml)
+[![GitHub last commit](https://img.shields.io/github/last-commit/underhax/adguardhome-unbound-lego)](https://github.com/underhax/adguardhome-unbound-lego/commits/main)
+[![GitHub issues](https://img.shields.io/github/issues/underhax/adguardhome-unbound-lego)](https://github.com/underhax/adguardhome-unbound-lego/issues)
+[![GitHub repo size](https://img.shields.io/github/repo-size/underhax/adguardhome-unbound-lego)](https://github.com/underhax/adguardhome-unbound-lego)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## About this Container
+Scratch-based container integrating [**AdGuard Home**](https://github.com/AdguardTeam/AdGuardHome) (DNS filtering), [**Unbound**](https://github.com/NLnetLabs/unbound) (recursive DNS resolver), and [**Lego**](https://github.com/go-acme/lego) (automated ACME DNS-01 certificate management).
 
-The primary motivation for this unified container is to allow AdGuard Home to reliably use `127.0.0.1` as its upstream Unbound DNS server, bypassing the limitations and unpredictable IP assignments associated with running them in separate containers.
+## System Design
 
-### Architecture & Logic
-* **AdGuard Home** acts as the front-facing DNS server and administrative interface, handling client requests (DoT, DoQ, DoH, and plain DNS) and applying rules.
-* **Unbound** runs locally within the same network namespace. AdGuard Home forwards safe queries directly to Unbound (`127.0.0.1:5053`), which recursively resolves them without relying on third-party upstream providers (e.g., Google or Cloudflare), maximizing privacy.
-* **Lego** automates the acquisition and renewal of wildcard TLS certificates via the Cloudflare DNS-01 challenge, ensuring secure DoT/DoH/DoQ connections without exposing port 80 to the public internet.
+This stack provides an integrated DNS infrastructure built on the principle of least privilege:
 
-### Security Posture
-This container is hardened by design, adhering strictly to the principle of least privilege:
-* **Non-Root Execution:** Processes run under a dedicated unprivileged user/group (`uid: 2000`, `gid: 2000`).
-* **Read-Only Filesystem:** The container's root filesystem is mounted as read_only: true to prevent the execution of malicious payloads if compromised.
-* **Volatile Storage:** Temporary files and sockets are constrained to tmpfs mounts with strict noexec and nosuid flags.
-* **Privilege Dropping:** All kernel capabilities are dropped (`cap_drop: ALL`), explicitly allowing only `NET_BIND_SERVICE` to bind privileged DNS ports.
-* **No New Privileges:** Security options (`no-new-privileges:true`) prevent child processes from escalating privileges.
-* **Secret Management:** Sensitive data, such as Cloudflare API tokens and account emails, are injected securely via Docker Secrets rather than environment variables.
+* The scratch container contains only the custom Go supervisor, AdGuard Home, Unbound with required shared libraries, Lego, and CA root certificates, excluding shells, package managers, and system utilities.
+* AdGuard Home functions as the primary network-wide DNS server, handling standard and encrypted protocols, enforcing filtering policies, and managing client traffic.
+* Unbound serves as the local recursive resolver, processing upstream queries directly over the shared loopback interface without external network hops.
+* Integrated Lego automates Let's Encrypt certificate acquisition and renewals via Cloudflare DNS-01 challenges without requiring open HTTP validation ports.
+* All processes execute under a dedicated unprivileged user and group configured via environment variables.
+* The runtime environment enforces a read-only root filesystem, hardened volume and tmpfs mounts, dropped Linux capabilities, strict resource quotas, and credential isolation through Docker Secrets.
 
-### Container Configuration Details
-**Exposed Ports:**
-* `127.0.0.1:8002:80/tcp`, `127.0.0.1:6443:443/tcp|udp`: AdGuard Home Admin UI and DNS-over-HTTPS (DoH).
-* `853:853/tcp|udp`: DNS-over-TLS (DoT) and DNS-over-QUIC (DoQ) exposed publicly.
-* Standard port 53 and DHCP ports are commented out by default but available for legacy clients if needed.
-* `5443:5443/tcp|udp`: DNSCrypt ports are commented out by default but available.
-* `127.0.0.1:6060:6060/tcp`: Pprof endpoints commented out by default but available for memory/CPU profiling during active troubleshooting.
+---
 
-**Mounted Volumes:**
-* `./data/agh/work` -> `/opt/adguardhome/work/data` (Persistent AdGuard Home database and statistics)
-* `./data/agh/conf` -> `/opt/adguardhome/conf` (AdGuard Home configuration file)
-* `./data/unbound` -> `/opt/unbound` (Unbound configuration and root trust anchors)
-* `./data/lego` -> `/opt/lego` (Generated TLS certificates)
+<details>
+<summary><strong>Directory Structure</strong></summary>
 
-**Networking & Resource Limits:**
-* Runs on a dedicated bridge network (`10.101.100.0/24`) with a static container IP (`10.101.100.2`).
-* Hard-capped at 0.5 CPU cores and 512m RAM by default to prevent host resource exhaustion.
+Production directory layout on the host (`/home/dns`):
 
-## Getting Started
-
-**IMPORTANT**: Placeholder values such as the user (`dns`), domain (`dns.example.tld`), password (`P4$$w@rD`), email (`dns@example.tld`), and SSH connection string (`user@remote_ip`) are used throughout this guide. You must replace them with your actual configuration details.
-
-### 1. Enable QUIC Support on the Host
-To ensure optimal performance for DNS-over-QUIC, increase the UDP receive/send buffer sizes on your host system:
-
-```bash
-cat << EOF >> /etc/sysctl.conf
-net.core.rmem_max = 7500000
-net.core.wmem_max = 7500000
-EOF
-sysctl -p
+```text
+├── docker-compose.yaml                # Production deployment manifest
+├── .env                               # Container environment configuration
+├── data/                              # Persistent service storage
+│   ├── adguardhome/                   # AdGuard Home data directory
+│   │   ├── conf/                      # Active AdGuardHome.yaml configuration
+│   │   └── work/                      # Databases, stats, filters, and query logs
+│   ├── lego/                          # Let's Encrypt accounts and issued TLS certificates
+│   └── unbound/                       # Recursive resolver configuration and root anchors
+└── secrets/                           # Docker secrets directory
+    ├── acme_domain                    # Domain name for certificate issuance
+    ├── acme_email                     # Let's Encrypt account email
+    └── cf_dns_api_token               # Cloudflare API token with DNS-01 edit permissions
 ```
 
-### 2. Configure the Environment (HestiaCP Example)
-If you are using [HestiaCP](https://hestiacp.com), create a dedicated user and web domain using the CLI:
+</details>
+
+---
+
+<details>
+<summary><strong>Deployment &amp; Setup</strong></summary>
+
+### Prerequisites
+
+* **Docker Engine & Compose:** Ensure Docker Engine and the Docker Compose plugin are installed on the host. Follow the official installation guide for [Ubuntu](https://docs.docker.com/engine/install/ubuntu/#install-using-the-repository).
+* **External Gateway Network (Optional):** Required only when publishing AdGuard Home externally under a domain name via an [Angie Reverse Proxy](https://github.com/webstudiobond/angie-docker-compose), which automatically provisions the shared `frontend_gateway` network. If deploying standalone without the Angie stack, create it manually:
+
+  ```bash
+  docker network create --subnet=172.20.0.0/16 frontend_gateway
+  ```
+
+### 1. Create a Dedicated System User
+
+Choose a dedicated, unprivileged numeric ID unique to this service on your host and verify that it is not already in use by another user or group:
 
 ```bash
-v-add-user dns P4$$w@rD dns@example.tld
-v-add-domain dns dns.example.tld
+APP_UID=<CHOSEN_UID>
+
+getent passwd ${APP_UID}
+getent group ${APP_UID}
 ```
 
-### 3. Create the Directory Structure
-Set up the required directories for persistent storage and secrets:
-
 ```bash
-mkdir -p /home/dns/{secrets,data/{unbound,lego,agh/{conf,work}}}
+sudo useradd -M -d /home/dns -s /usr/sbin/nologin -u ${APP_UID} -U dns
 ```
 
-### 4. Initial Bootstrap Run
-Before running the full stack, start a temporary interactive container to complete the AdGuard Home Setup Wizard:
+```bash
+sudo mkdir -p /home/dns
+sudo chown root:dns /home/dns
+sudo chmod 0750 /home/dns
+```
+
+### 2. Prepare Directory Structure & Permissions
 
 ```bash
+sudo mkdir -p /home/dns/{secrets,data/{adguardhome/{conf,work},lego,unbound}}
+
+sudo chown root:dns /home/dns/secrets
+sudo chmod 0750 /home/dns/secrets
+
+sudo chown -R dns:dns /home/dns/data
+sudo find /home/dns/data -type d -exec chmod 0700 {} +
+```
+
+### 3. Fetch Deployment Manifests
+
+```bash
+REPO="https://raw.githubusercontent.com/underhax/adguardhome-unbound-lego/main"
+
+sudo curl -fsSL ${REPO}/docker-compose.yaml -o /home/dns/docker-compose.yaml
+sudo curl -fsSL ${REPO}/.env.example -o /home/dns/.env
+
+sudo chown root:root /home/dns/{docker-compose.yaml,.env}
+sudo chmod 0600 /home/dns/{docker-compose.yaml,.env}
+```
+
+```bash
+sudo sed -i "s/^APP_UID=.*/APP_UID=${APP_UID}/" /home/dns/.env
+sudo sed -i "s/^APP_GID=.*/APP_GID=${APP_UID}/" /home/dns/.env
+```
+
+Review optional variables in `/home/dns/.env`:
+* `HOST_BIND_IP`: Host interface to bind internal ports. Defaults to `127.0.0.1` (loopback only) for private access via SSH tunnel. For WireGuard VPN access, set this to the host WireGuard IP (e.g. `10.8.0.1`).
+* `HOST_IP`: Public host IP for externally exposed listeners (DoT and DoQ on port 853). Run `ip --br a` on the host to identify your public interface address. It is recommended to leave this as `127.0.0.1` during initial setup and update it only after the service is fully verified.
+* `AGHUL_VERSION`: Optional image tag pin (defaults to `latest`).
+
+### 4. Initial Bootstrap Setup
+
+Start the temporary bootstrap container to initialize configuration files and run the onboarding wizard:
+
+```bash
+cd /home/dns
+
 docker run --rm -it \
-  --name agh-bootstrap \
-  -u root \
-  -v $(pwd)/data/agh/work:/opt/adguardhome/work/data \
-  -v $(pwd)/data/agh/conf:/opt/adguardhome/conf \
+  --name adguardhome-bootstrap \
+  -u 0:0 \
+  -v $(pwd)/data/adguardhome/work:/opt/adguardhome/work \
+  -v $(pwd)/data/adguardhome/conf:/opt/adguardhome/conf \
+  -v $(pwd)/data/unbound:/opt/unbound \
   -p 127.0.0.1:3000:3000/tcp \
-  -p 127.0.0.1:6553:53/udp \
   -e LEGO_ENABLE=false \
   -e LOG_LEVEL=debug \
-  agh-unbound-lego:latest
+  ghcr.io/underhax/adguardhome-unbound-lego:latest
 ```
 
-*If you are configuring a remote headless server, use an SSH tunnel to access the UI safely:*
+If configuring on a remote server, establish an SSH tunnel from your local machine:
 
 ```bash
-# Connect to a remote host on a custom SSH port (e.g., 2222) with local port forwarding
-ssh -p 2222 -L 3000:127.0.0.1:3000 user@remote_ip
+ssh -i ~/.ssh/id_ed25519 -p 22 -N -L 3000:127.0.0.1:3000 user@your-server-ip
 ```
 
-Open [http://127.0.0.1:3000](http://127.0.0.1:3000) in your local browser and complete the wizard:
-* Set up an administrative username and a strong password.
-* Navigate to `Settings` -> `DNS Settings`. In the `Upstream DNS` servers field, enter: `127.0.0.1:5053` and click `Apply`.
-* Navigate to `Settings` -> `General Settings` -> `Logs configuration` & `Statistics configuration`. Add `dns.healthcheck.arpa` to the `Ignored domains` list and click `Save`.
-* Configure any other desired settings, then press `Ctrl+C` in your terminal to stop the bootstrap container.
+Open `http://localhost:3000` in your local browser, set your administrative username and password, complete the initial wizard, and stop the container using `Ctrl + C` in your terminal.
 
-### 5. Set Directory Permissions
-Ensure the application user has the correct ownership of the data directories (matching the container's internal `UID/GID 2000`). This step is mandatory.
+Restore unprivileged ownership across generated files:
 
 ```bash
-chown -R 2000:2000 /home/dns/data
+sudo chown -R dns:dns /home/dns/data
+sudo find /home/dns/data -type d -exec chmod 0700 {} +
+sudo find /home/dns/data -type f -exec chmod 0600 {} +
 ```
 
-### 6. Prerequisites for Automated TLS (Lego)
-If you intend to use Let's Encrypt for DoT/DoQ/DoH:
+### 5. Configure Automated TLS with Lego (Optional)
 
-**Cloudflare DNS Configuration:**
-* In your [Cloudflare Dashboard](https://dash.cloudflare.com), create the following DNS records (ensure proxying is disabled / "`DNS Only`"):
-  * `A` record for `dns.example.tld` pointing to your server's IPv4 address.
-  * `AAAA` record for `dns.example.tld` pointing to your server's IPv6 address (if applicable).
-  * `CNAME` record for `*.dns.example.tld` pointing to `dns.example.tld`.
-* Generate an [API Token](https://dash.cloudflare.com/profile/api-tokens) with `Zone:DNS:Edit` permissions at Cloudflare API Tokens.
+This step is required only when using integrated Lego to obtain and renew Let's Encrypt certificates via Cloudflare DNS-01. If you manage certificates externally, skip to the next step.
 
-**Configure Secrets:**
-Use an editor like `nano` to populate the secrets files to avoid leaking sensitive data in your shell history.
+Enable Lego in the environment configuration:
 
 ```bash
-nano /home/dns/secrets/acme_email
-nano /home/dns/secrets/cf_dns_api_token
+sudo sed -i "s/^LEGO_ENABLE=.*/LEGO_ENABLE=true/" /home/dns/.env
 ```
 
-Set strict permissions so only the owner can read them:
+Uncomment the service-level and top-level secrets blocks in `docker-compose.yaml`:
 
 ```bash
-chmod 400 /home/dns/secrets/acme_email /home/dns/secrets/cf_dns_api_token
-chown -R 2000:2000 /home/dns/secrets
+sudo sed -i 's/^    # secrets:/    secrets:/; s/^    #   - /      - /; s/^# secrets:/secrets:/; s/^#   /  /' /home/dns/docker-compose.yaml
 ```
 
-### 7. Docker Compose Setup
-Download the [Docker Compose file](https://raw.githubusercontent.com/underhax/agh-unbound-lego/main/docker-compose.yaml):
+Create empty secret files with restricted ownership:
 
 ```bash
-curl --proto '=https' -sSLf -o /home/dns/docker-compose.yaml https://raw.githubusercontent.com/underhax/agh-unbound-lego/main/docker-compose.yaml
+sudo touch /home/dns/secrets/{acme_{domain,email},cf_dns_api_token}
+sudo chown root:dns /home/dns/secrets/*
+sudo chmod 0440 /home/dns/secrets/*
 ```
 
-Edit the downloaded `docker-compose.yaml` to enable Lego, uncomment both the service-level and top-level secrets blocks, and configure your actual domain for certificate generation:
+Populate the secrets using an interactive editor:
 
 ```bash
-nano /home/dns/docker-compose.yaml
+sudo nano /home/dns/secrets/acme_domain
+sudo nano /home/dns/secrets/acme_email
+sudo nano /home/dns/secrets/cf_dns_api_token
 ```
 
-* Change `LEGO_ENABLE=false` to `LEGO_ENABLE=true`
-* Set `ACME_DOMAIN=` to your actual domain (e.g., `ACME_DOMAIN=dns.example.tld`)
-* Uncomment the secrets blocks at the bottom of the file if Lego is enabled.
+### 6. Host Network Tuning
 
-```yaml
-    secrets:
-      - source: acme_email
-      - source: cf_dns_api_token
+Increase UDP receive and transmit buffer limits for DNS-over-QUIC:
 
-secrets:
-  acme_email:
-    file: ./secrets/acme_email
-  cf_dns_api_token:
-    file: ./secrets/cf_dns_api_token
+```bash
+printf '%s\n' \
+  'net.core.rmem_max=7500000' \
+  'net.core.wmem_max=7500000' | sudo tee /etc/sysctl.d/99-net-buffers.conf
+sudo sysctl -p /etc/sysctl.d/99-net-buffers.conf
 ```
 
-### 8. Scaling & Optimization (Optional)
-The default image is highly optimized for lightweight home usage (1 thread, minimal caching). For high-load environments (100+ clients), scale the service by modifying `/home/dns/data/unbound/unbound.conf`:
-* `num-threads`: Set to the number of allocated CPU cores (e.g., `2`).
-* `msg-cache-size`: Increase the DNS message cache (e.g., `32m`).
-* `rrset-cache-size`: Must be exactly 2x the msg-cache-size (e.g., `64m`).
+### 7. Start the Service
 
-*Note: If you increase these caching values, you must proportionally raise the cpus and memory limits in your `docker-compose.yaml`.*
-
-```yaml
-    deploy:
-      resources:
-        limits:
-          cpus: "1.0"
-          memory: 1024m
-        reservations:
-          cpus: "0.1"
-          memory: 256m
-```
-
-### 9. Start the Service
+For initial configuration and testing before configuring a reverse proxy, uncomment the web admin port line in `/home/dns/docker-compose.yaml` (mapped by default to `8002:80`). You can then securely access the administrative panel via a VPN connection or an SSH tunnel.
 
 ```bash
 docker compose -f /home/dns/docker-compose.yaml up -d
 ```
 
-Refer to the [AdGuard Home Wiki](https://github.com/AdguardTeam/AdGuardHome/wiki) for configuration.
+### 8. Post-Deployment AdGuard Home Setup
 
-### 10. Web Server Proxy Setup (HestiaCP)
-Download the custom Nginx templates for AdGuard Home:
+Access the AdGuard Home Web UI (via VPN, local SSH tunnel at `http://localhost:8002`, or later through your Angie reverse proxy):
 
-```bash
-curl --proto '=https' -sSLf -o /usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.stpl https://raw.githubusercontent.com/underhax/agh-unbound-lego/main/usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.stpl
-```
+* In `Settings` -> `DNS settings`, set the Upstream DNS server to `127.0.0.1:5053`.
+* In `Settings` -> `General settings`, add `dns.healthcheck.arpa` to `Ignored domains` under both Logs configuration and Statistics configuration.
 
-```bash
-curl --proto '=https' -sSLf -o /usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl https://raw.githubusercontent.com/underhax/agh-unbound-lego/main/usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl
-```
+</details>
 
-#### Restrict Admin Panel Access (Optional)
+---
 
-By default, the admin panel is protected by a secret path (`/agh-secret-path/`).
+<details>
+<summary><strong>External Angie</strong></summary>
 
-Edit `sb_agh.tpl` and replace `agh-secret-path` with your own unique path.
+## Edge Reverse Proxy (External Angie)
 
-To add IP-based restriction:
+The `adguardhome` container connects to the shared `frontend_gateway` network (`172.20.0.0/16`) at static IP `172.20.0.253` without publishing HTTP ports on the host. An external Edge Angie instance terminates HTTPS/TLS, manages ACME certificates, and routes encrypted DoH traffic while keeping the administrative interface isolated.
 
-1. Edit the template:
-   ```bash
-   nano /usr/local/hestia/data/templates/web/nginx/php-fpm/sb_agh.tpl
-   ```
+A production-hardened virtual host template for AdGuard Home is maintained in the **[angie-docker-compose](https://github.com/webstudiobond/angie-docker-compose)** repository under `data/conf.d/domains/`:
 
-2. Uncomment and add your trusted IPs (one per line):
-   ```nginx
-   location /agh-secret-path/ {
-       allow 192.168.1.2;    # Your IP
-       allow 10.0.0.50;      # Your IP 2
-       deny all;
-   ```
-
-**Security:** Rate limiting is already enabled in the template (10 req/sec, burst 30).
-
-Apply the template to your domain:
+Download the template [`adguardhome.conf`](https://github.com/webstudiobond/angie-docker-compose/blob/main/data/conf.d/domains/adguardhome.conf) into your Edge Angie domains directory:
 
 ```bash
-v-change-web-domain-tpl dns dns.example.tld sb_agh
+DATA_ANGIE="/home/angie/data"
+ANGIE_REPO="https://raw.githubusercontent.com/webstudiobond/angie-docker-compose/main/data/conf.d/domains"
+
+curl -fsSL "${ANGIE_REPO}/adguardhome.conf" -o "${DATA_ANGIE}/conf.d/domains/adguardhome.conf"
 ```
 
-## Building the Image Locally (Optional)
-To compile the Docker image yourself from the source repository:
+Open the file to customize your target domain, secret subpath, upstream definitions, and ACME client identifier before reloading Angie:
 
 ```bash
-cd /home/dns/
-
-git clone https://github.com/underhax/agh-unbound-lego.git
-
-cd /home/dns/agh-unbound-lego
-
-docker build --no-cache --progress=plain --tag agh-unbound-lego:latest .
-
-docker compose -f /home/dns/agh-unbound-lego/docker-compose.dev.yaml up -d
+sudo nano "${DATA_ANGIE}/conf.d/domains/adguardhome.conf"
 ```
 
-## Useful Networking Tips
+</details>
 
-**Sharing the DNS resolver with other Docker containers:**
-To allow containers from separate Docker Compose stacks to use this DNS server, connect them to the same external network and hardcode the DNS IP:
+---
 
-```yaml
-dns:
-  - 10.101.100.2
-networks:
-  - agh_dns
+<details>
+<summary><strong>Permissions &amp; Ownership</strong></summary>
 
-networks:
-  agh_dns:
-    external: true
-    name: adguardhome_dns # Must match the actual network name created by the AGH compose stack
-```
+### Host Permissions & Privilege Separation
 
-**Global Docker DNS configuration:**
-Alternatively, to force all containers on the host machine to use this DNS server by default, update your `/etc/docker/daemon.json`:
+The stack enforces strict host-level privilege separation across three ownership tiers so that even in the event of a container compromise, the process cannot modify deployment manifests or secret files:
 
-```json
-{
-  "dns": ["10.101.100.2", "1.1.1.1", "8.8.8.8"]
-}
-```
+* `root:root` (`0600`): `docker-compose.yaml` and `.env` (accessible exclusively to host root).
+* `root:dns` (`0750`/`0440`): `/home/dns` base directory (`0750`), `secrets/` directory (`0750`), and secret files (`acme_domain`, `acme_email`, `cf_dns_api_token` at `0440`; read-only to container, immutable to runtime processes).
+* `dns:dns` (`0700`/`0600`): `data/` persistent storage (`adguardhome`, `unbound`, `lego`). Managed with strict DAC: directories `0700`, files `0600`.
 
-## Basic Operations
+| Host path | Owner | Mode | Reason |
+| --- | --- | --- | --- |
+| `/home/dns` | `root:dns` | `0750` | Allow service traversal without access for other users |
+| `docker-compose.yaml`, `.env` | `root:root` | `0600` | Host-only manifests and environment settings |
+| `secrets/` directory | `root:dns` | `0750` | Traverse-only access for the service group |
+| `secrets/*` | `root:dns` | `0440` | Read-only to the service group |
+| `data/` directories | `dns:dns` | `0700` | Private writable runtime storage |
+| `data/` files | `dns:dns` | `0600` | Private runtime databases, configuration, and certificates |
+
+### One-Shot Permission Reset (Running Stack)
+
+Use this self-contained block to apply or restore canonical ownership and permissions on an existing or migrated installation without stopping the stack:
 
 ```bash
-# Create and start the stack in the background
-docker compose -f /home/dns/docker-compose.yaml up -d
+sudo chown root:dns /home/dns
+sudo chmod 0750 /home/dns
 
-# Stop and remove the containers
-docker compose -f /home/dns/docker-compose.yaml down
+sudo chown root:root /home/dns/{docker-compose.yaml,.env}
+sudo chmod 0600 /home/dns/{docker-compose.yaml,.env}
+
+sudo chown -R root:dns /home/dns/secrets
+sudo find /home/dns/secrets -type d -exec chmod 0750 {} +
+sudo find /home/dns/secrets -type f -exec chmod 0440 {} +
+
+sudo chown -R dns:dns /home/dns/data
+sudo find /home/dns/data -type d -exec chmod 0700 {} +
+sudo find /home/dns/data -type f -exec chmod 0600 {} +
 ```
+
+</details>
+
+---
+
+<details>
+<summary><strong>Operation &amp; Maintenance</strong></summary>
+
+### Verifying Service Health
+
+Check container status and resource consumption:
+
+```bash
+sudo docker compose -f /home/dns/docker-compose.yaml ps
+sudo docker stats --no-stream adguardhome
+```
+
+### Inspecting Runtime Logs
+
+Follow service logs in real time:
+
+```bash
+sudo docker compose -f /home/dns/docker-compose.yaml logs -f
+```
+
+### Tearing Down the Stack
+
+Stop and remove the container:
+
+```bash
+sudo docker compose -f /home/dns/docker-compose.yaml down
+```
+
+</details>
+
+---
+
+<details>
+<summary><strong>Development</strong></summary>
+
+For local compilation, testing, static analysis, and CI/CD details, see **[DEVELOPMENT.md](DEVELOPMENT.md)**.
+
+</details>
+
+---
+
+<details>
+<summary><strong>License &amp; Attribution</strong></summary>
+
+## License & Attribution
+
+This repository and deployment architecture are licensed under the [MIT License](LICENSE).
+
+**AdGuard Home:** Open-source software developed by [AdguardTeam](https://github.com/AdguardTeam/AdGuardHome) under the [GPL-3.0 License](https://github.com/AdguardTeam/AdGuardHome/blob/master/LICENSE.txt).
+
+**Unbound:** Open-source recursive DNS resolver developed by [NLnet Labs](https://github.com/NLnetLabs/unbound) under the [BSD-3-Clause License](https://github.com/NLnetLabs/unbound/blob/master/LICENSE).
+
+**Lego:** Open-source Let's Encrypt client developed by [go-acme](https://github.com/go-acme/lego) under the [MIT License](https://github.com/go-acme/lego/blob/main/LICENSE).
+
+</details>

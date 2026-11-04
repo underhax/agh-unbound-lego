@@ -10,16 +10,28 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/underhax/agh-unbound-lego/internal/util"
+	"github.com/underhax/adguardhome-unbound-lego/internal/util"
 )
+
+var (
+	restartStopTimeout = 5 * time.Second
+	killTimeout        = 1 * time.Second
+)
+
+func defaultCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
+	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
+	return exec.CommandContext(ctx, name, args...)
+}
+
+var execCommand = defaultCommandContext
 
 // Manager handles the lifecycle, monitoring, and structured logging of child processes.
 type Manager struct {
 	ctx        context.Context
 	cmds       map[string]*exec.Cmd
-	restarting map[string]bool // Suppresses crash alerts during controlled service reloads.
+	restarting map[string]bool
 	errChan    chan error
-	order      []string // Tracks insertion order for reverse LIFO shutdown.
+	order      []string
 	mu         sync.Mutex
 	wg         sync.WaitGroup
 	isStopping bool
@@ -44,13 +56,10 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 		return fmt.Errorf("process %s is already running", name)
 	}
 
-	// #nosec G204 - Arguments are derived from validated, internally controlled configuration.
-	cmd := exec.CommandContext(m.ctx, bin, args...)
+	cmd := execCommand(m.ctx, bin, args...)
 
 	cmd.Env = util.BuildCleanEnv()
 
-	// Create pipes to intercept child process output.
-	// Directing these to os.Stdout would break JSON log parsing.
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return fmt.Errorf("failed to create stdout pipe for %s: %w", name, err)
@@ -60,7 +69,6 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 		return fmt.Errorf("failed to create stderr pipe for %s: %w", name, err)
 	}
 
-	// Group assignment ensures signal isolation from the supervisor's TTY/Docker shell.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := cmd.Start(); err != nil {
@@ -70,7 +78,6 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 	var logWg sync.WaitGroup
 	logWg.Add(2)
 
-	// Consume stdout/stderr in separate goroutines to prevent pipe buffer saturation (blocking).
 	go func() {
 		defer logWg.Done()
 		pipeLogger(m.ctx, name, "stdout", stdout)
@@ -82,7 +89,6 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 
 	m.cmds[name] = cmd
 
-	// Track order to support sequential LIFO shutdown logic.
 	if !slices.Contains(m.order, name) {
 		m.order = append(m.order, name)
 	}
@@ -96,7 +102,6 @@ func (m *Manager) Start(name, bin string, args ...string) error {
 }
 
 // monitor waits for process exit and distinguishes between intentional and accidental termination.
-// logWg ensures that process logs are fully flushed before the underlying OS pipes are forcibly closed.
 func (m *Manager) monitor(name string, cmd *exec.Cmd, logWg *sync.WaitGroup) {
 	defer m.wg.Done()
 
@@ -143,7 +148,7 @@ func (m *Manager) Restart(name, bin string, args ...string) error {
 	}
 
 	slog.Info("Restarting process", "name", name)
-	if err := m.stopOne(name, 5*time.Second); err != nil {
+	if err := m.stopOne(name, restartStopTimeout); err != nil {
 		m.mu.Lock()
 		delete(m.restarting, name)
 		m.mu.Unlock()
@@ -152,9 +157,6 @@ func (m *Manager) Restart(name, bin string, args ...string) error {
 	return m.Start(name, bin, args...)
 }
 
-// stopOne encapsulates the full SIGTERM -> wait -> SIGKILL escalation for a single process.
-// The signal is sent while holding the mutex to prevent a PID reuse race between
-// process exit detection in monitor() and signal delivery.
 func (m *Manager) stopOne(name string, timeout time.Duration) error {
 	m.mu.Lock()
 	cmd, exists := m.cmds[name]
@@ -175,8 +177,6 @@ func (m *Manager) stopOne(name string, timeout time.Duration) error {
 		return !exists
 	}
 
-	// PollAfterDelayWithBackoff enforces the timeout via deadline, eliminating the fragile
-	// integer-division attempt calculation that silently truncates non-round timeout values.
 	if util.PollAfterDelayWithBackoff(timeout, 50*time.Millisecond, 500*time.Millisecond, exited) {
 		return nil
 	}
@@ -190,8 +190,7 @@ func (m *Manager) stopOne(name string, timeout time.Duration) error {
 	}
 	m.mu.Unlock()
 
-	// Allow one final scheduling quantum for the kernel to clean up after SIGKILL.
-	if util.PollAfterDelayWithBackoff(1*time.Second, 100*time.Millisecond, 200*time.Millisecond, exited) {
+	if util.PollAfterDelayWithBackoff(killTimeout, 100*time.Millisecond, 200*time.Millisecond, exited) {
 		return nil
 	}
 
@@ -206,15 +205,12 @@ func (m *Manager) StopAll(timeout time.Duration) {
 	copy(shutdownOrder, m.order)
 	m.mu.Unlock()
 
-	// Shutdown in reverse order: AGH must stop before its upstream resolver (unbound).
 	for _, name := range slices.Backward(shutdownOrder) {
 		if err := m.stopOne(name, timeout); err != nil {
 			slog.Error("Failed to stop process cleanly", "name", name, "error", err)
 		}
 	}
 
-	// Bounds maximum I/O drain latency to prevent supervisor Deadlocks
-	// from daemonized child processes inheriting STDOUT descriptors.
 	done := make(chan struct{})
 	go func() {
 		m.wg.Wait()
