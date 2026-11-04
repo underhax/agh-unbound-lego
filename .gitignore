@@ -23,3 +23,5 @@ go.work.sum
 
  *.txt
 /supervisor
+coverage/
+.bashunit/

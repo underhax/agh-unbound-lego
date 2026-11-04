@@ -113,3 +113,30 @@ jobs:
         run: |
           docker compose -f ./docker-compose.yaml config -q
           docker compose -f ./docker-compose.dev.yaml config -q
+
+  bashunit:
+    name: Shell lint & tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check shell formatting with shfmt
+        run: shfmt -d -s -i 2 usr/local/bin/ tests/
+
+      - name: Lint shell scripts with shellcheck
+        run: shellcheck --enable=all -x usr/local/bin/angie_cert_sync.sh tests/angie_cert_sync_test.sh
+
+      - name: Install checkbashisms
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends devscripts
+
+      - name: Check portability with checkbashisms
+        run: checkbashisms -f usr/local/bin/angie_cert_sync.sh tests/angie_cert_sync_test.sh || true
+
+      - name: Setup bashunit
+        uses: TypedDevs/bashunit@8d4f357f52df7596f92ece2d6c049d91d45517a2 # 0.52.0
+
+      - name: Run unit tests
+        run: bashunit tests/

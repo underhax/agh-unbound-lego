@@ -1,0 +1,9 @@
+[Unit]
+Description=Monitor Lego ACME Certificates for Angie Synchronization
+
+[Path]
+PathChanged=/home/dns/data/lego/certificates
+Unit=angie-cert-sync.service
+
+[Install]
+WantedBy=multi-user.target

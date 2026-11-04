@@ -227,11 +227,52 @@ ANGIE_REPO="https://raw.githubusercontent.com/webstudiobond/angie-docker-compose
 curl -fsSL "${ANGIE_REPO}/adguardhome.conf" -o "${DATA_ANGIE}/conf.d/domains/adguardhome.conf"
 ```
 
-Open the file to customize your target domain, secret subpath, upstream definitions, and ACME client identifier before reloading Angie:
+Open the file to customize your target domain, certificate directory path (domain name with dots replaced by underscores), secret subpath, and upstream definitions before reloading Angie:
 
 ```bash
 sudo nano "${DATA_ANGIE}/conf.d/domains/adguardhome.conf"
 ```
+
+### Automated TLS Certificate Synchronization (Lego to Angie)
+
+When integrated Lego is active (`LEGO_ENABLE=true`), wildcard TLS certificates (`*.dns.adguardhome.example` and `dns.adguardhome.example`) are acquired and renewed inside `/home/dns/data/lego/certificates/` with strict DAC permissions (`0700`/`0600`, owned by `dns:dns`).
+
+If your Edge Angie instance operates under an isolated unprivileged user (`angie:angie`) with certificates expected in `/home/angie/data/certs/<domain_dir>/`, deploy the hardened systemd synchronization unit. It monitors Lego certificate renewals via inotify (`systemd.path`), atomically syncs `.crt` and `.key` files with minimal permissions (`0500` directory, `0400` files), and triggers a graceful zero-downtime Angie reload (`SIGHUP`):
+
+1. **Download Synchronization Script and Systemd Units:**
+
+   ```bash
+   REPO="https://raw.githubusercontent.com/underhax/adguardhome-unbound-lego/main"
+
+   sudo curl -fsSL "${REPO}/usr/local/bin/angie_cert_sync.sh" -o /usr/local/bin/angie_cert_sync.sh
+   sudo chown root:root /usr/local/bin/angie_cert_sync.sh
+   sudo chmod 0500 /usr/local/bin/angie_cert_sync.sh
+
+   sudo curl -fsSL "${REPO}/etc/systemd/system/angie-cert-sync.service" -o /etc/systemd/system/angie-cert-sync.service
+   sudo curl -fsSL "${REPO}/etc/systemd/system/angie-cert-sync.path" -o /etc/systemd/system/angie-cert-sync.path
+   sudo chown root:root /etc/systemd/system/angie-cert-sync.*
+   sudo chmod 0644 /etc/systemd/system/angie-cert-sync.*
+
+   sudo systemctl daemon-reload
+   ```
+
+2. **Perform Initial Sync:**
+
+   Execute the one-shot sync service to test synchronization and file permissions:
+
+   ```bash
+   sudo systemctl start angie-cert-sync.service
+   sudo systemctl status angie-cert-sync.service
+   ```
+
+3. **Enable Continuous Monitoring:**
+
+   Enable the systemd path monitor to automatically trigger synchronization on every future renewal:
+
+   ```bash
+   sudo systemctl enable --now angie-cert-sync.path
+   sudo systemctl status angie-cert-sync.path
+   ```
 
 </details>
 
