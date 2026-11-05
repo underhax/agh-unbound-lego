@@ -5,8 +5,7 @@ services:
     image: ghcr.io/underhax/adguardhome-unbound-lego:${AGHUL_VERSION:-latest}
     container_name: adguardhome
     hostname: adguardhome
-    pull_policy: always
-    restart: unless-stopped
+    restart: always
     user: "${APP_UID}:${APP_GID}"
     read_only: true
     security_opt:
